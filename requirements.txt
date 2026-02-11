@@ -1,5 +1,5 @@
 streamlit
 pandas
-import plotly.express
+plotly.express
 Credentials
 gspread
