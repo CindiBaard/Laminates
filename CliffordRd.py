@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from google.oauth2.service_account import Credentials
+from google.oauth2 import service_account
 import gspread
 
 # --- 1. CONFIGURATION ---
@@ -11,10 +11,10 @@ SPREADSHEET_ID = "1Yq-sZ33JsXNUyw_UwYCvSO3CSKdpubZDUtq6_cv86Uo"
 # --- 2. AUTHENTICATION & CONNECTION ---
 # Note: You will need a service_account.json file from Google Cloud Console
 def get_gspread_client():
-    scope = ["https://www.googleapis.com/auth/spreadsheets"]
-    # Update 'service_account.json' with the path to your credentials file
-    creds = Credentials.from_service_account_file("service_account.json", scopes=scope)
-    return gspread.authorize(creds)
+    # Instead of looking for a file, we use the dictionary from st.secrets
+    creds_info = st.secrets["gcp_service_account"]
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = service_account.Credentials.from_service_account_info(creds_info, scopes=scope)
 
 def load_data():
     client = get_gspread_client()
