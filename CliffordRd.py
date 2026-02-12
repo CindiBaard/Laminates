@@ -66,7 +66,6 @@ if st.sidebar.button("🔄 Sync with Google Sheets"):
 st.subheader(f"Current Stock Entry: {selected_site} ({selected_month})")
 
 # Determine columns based on the selected site
-# Keeping CliffordRd logic exactly as requested
 if selected_site == "CliffordRd":
     month_cols = [
         f"CliffordRd_Rolls {selected_month}", 
@@ -75,7 +74,6 @@ if selected_site == "CliffordRd":
         f"SquareM {selected_month}"
     ]
 else:
-    # Applying similar logic for KPark and HarrisDrive
     month_cols = [
         f"{selected_site}_Rolls {selected_month}", 
         f"{selected_site}_SlitRolls {selected_month}", 
@@ -117,11 +115,9 @@ summary_list = []
 for _, row in st.session_state.df.iterrows():
     mat_sum = {"Material": row["Material"], "Code": row["Code"]}
     
-    # Calculate totals across all sites for specific metrics
     for metric in ["Rolls", "SlitRolls", "Pallets", "SquareM"]:
         total = 0
         for site in site_options:
-            # Special case for CliffordRd SquareM column naming
             if site == "CliffordRd" and metric == "SquareM":
                 col = f"SquareM {selected_month}"
             else:
@@ -129,7 +125,6 @@ for _, row in st.session_state.df.iterrows():
             
             val = row.get(col, 0)
             try:
-                # Convert to float and treat empty strings as 0
                 total += float(val) if val != "" else 0
             except (ValueError, TypeError):
                 pass
@@ -151,7 +146,6 @@ mat_data = st.session_state.df[st.session_state.df['Material'] == selected_mat].
 
 trend_values = []
 for m in months:
-    # Logic remains locked to CliffordRd headers as requested
     col_name = f"CliffordRd_{selected_metric} {m}" if selected_metric != "SquareM" else f"SquareM {m}"
     val = mat_data.get(col_name, 0)
     try:
@@ -160,8 +154,18 @@ for m in months:
         trend_values.append(0)
 
 plot_df = pd.DataFrame({'Month': months, 'Value': trend_values})
-fig = px.line(plot_df, x='Month', y='Value', title=f"CliffordRd: {selected_metric} Trend", markers=True)
-st.plotly_chart(fig, use_container_width=True)=f"{selected_metric} Trend for {selected_mat}", 
+
+# Clean Plotly call
+fig = px.line(
+    plot_df, 
+    x='Month', 
+    y='Value', 
+    title=f"CliffordRd: {selected_metric} Trend", 
+    markers=True
+)
+
+st.plotly_chart(fig, use_container_width=True)
+=f"{selected_metric} Trend for {selected_mat}", 
     markers=True,
     line_shape="linear"
 )
