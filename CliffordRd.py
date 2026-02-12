@@ -125,7 +125,8 @@ for _, row in st.session_state.df.iterrows():
             
             val = row.get(col, 0)
             try:
-                total += float(val) if val != "" else 0
+                # Convert to float, treat empty/invalid as 0
+                total += float(val) if str(val).strip() != "" else 0
             except (ValueError, TypeError):
                 pass
         mat_sum[f"Gross {metric}"] = total
@@ -139,7 +140,7 @@ st.divider()
 st.subheader("📈 Stock Usage Trends (CliffordRd)")
 
 unique_materials = st.session_state.df['Material'].unique()
-selected_mat = st.selectbox("Select Material for Trend", unique_materials)
+selected_mat = st.selectbox("Select Material for Trend View", unique_materials)
 selected_metric = st.radio("Select Metric", ["Rolls", "Pallets", "SquareM"], horizontal=True)
 
 mat_data = st.session_state.df[st.session_state.df['Material'] == selected_mat].iloc[0]
@@ -149,23 +150,21 @@ for m in months:
     col_name = f"CliffordRd_{selected_metric} {m}" if selected_metric != "SquareM" else f"SquareM {m}"
     val = mat_data.get(col_name, 0)
     try:
-        trend_values.append(float(val) if val != "" else 0)
+        trend_values.append(float(val) if str(val).strip() != "" else 0)
     except (ValueError, TypeError):
         trend_values.append(0)
 
 plot_df = pd.DataFrame({'Month': months, 'Value': trend_values})
 
-# Clean Plotly call
 fig = px.line(
     plot_df, 
     x='Month', 
     y='Value', 
-    title=f"CliffordRd: {selected_metric} Trend", 
+    title=f"CliffordRd: {selected_metric} Trend for {selected_mat}", 
     markers=True
 )
 
-st.plotly_chart(fig, use_container_width=True)
-=f"{selected_metric} Trend for {selected_mat}", 
+st.plotly_chart(fig, use_container_width=True)=f"{selected_metric} Trend for {selected_mat}", 
     markers=True,
     line_shape="linear"
 )
