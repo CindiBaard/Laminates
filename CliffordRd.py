@@ -71,15 +71,21 @@ else:
         f"{selected_site}_SquareM {selected_month}"
     ]
 
-# Only show columns that actually exist in the Google Sheet
 available_cols = [c for c in month_cols if c in st.session_state.df.columns]
 display_cols = ["Material", "Laminate", "Code"] + available_cols
 
+# Define which columns are editable and pinned
+# Streamlit data_editor automatically freezes the header row.
 edited_df = st.data_editor(
     st.session_state.df[display_cols],
     use_container_width=True,
     hide_index=True,
-    disabled=["Material", "Laminate", "Code"]
+    column_config={
+        "Material": st.column_config.TextColumn(pinned=True), # Freezes the Material column
+        "Laminate": st.column_config.TextColumn(disabled=True),
+        "Code": st.column_config.TextColumn(disabled=True),
+    },
+    disabled=["Laminate", "Code"] # Specifically allows editing in the month_cols
 )
 
 if st.button("💾 Save Changes to Google Sheets"):
@@ -104,7 +110,6 @@ for _, row in st.session_state.df.iterrows():
             col = f"SquareM {selected_month}" if (site == "CliffordRd" and metric == "SquareM") else f"{site}_{metric} {selected_month}"
             val = row.get(col, 0)
             try:
-                # Basic cleanup of strings before converting to numbers
                 clean_val = str(val).replace(',', '').strip()
                 total += float(clean_val) if clean_val != "" else 0
             except (ValueError, TypeError):
@@ -133,7 +138,5 @@ for m in months:
         trend_values.append(0)
 
 plot_df = pd.DataFrame({'Month': months, 'Value': trend_values})
-
-# Clean, single-call Plotly code
 fig = px.line(plot_df, x='Month', y='Value', title=f"CliffordRd: {selected_metric} Trend", markers=True)
 st.plotly_chart(fig, use_container_width=True)
