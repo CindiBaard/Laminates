@@ -99,7 +99,7 @@ edited_df = st.data_editor(
     column_config=col_config,
     disabled=["Laminate", "Code"] 
 )
-What this fixes:
+
 # --- 6. GROSS SUMMARY ---
 st.divider()
 st.subheader(f"📊 Gross Stock Summary - {selected_month}")
