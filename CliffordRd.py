@@ -76,15 +76,15 @@ display_cols = ["Material", "Laminate", "Code"] + available_cols
 
 # Initialize config with standard columns
 col_config = {
-    "Material": st.column_config.TextColumn(pinned=True, width="medium"),
-    "Laminate": st.column_config.TextColumn(disabled=True, width="medium"),
-    "Code": st.column_config.TextColumn(disabled=True, width="small"),
+    "Material": st.column_config.TextColumn(pinned=True, width=250),
+    "Laminate": st.column_config.TextColumn(disabled=True, width=200),
+    "Code": st.column_config.TextColumn(disabled=True, width=100),
 }
 
-# FORCING SCROLLBAR: Explicitly define widths for the dynamic site columns
+# FORCE OVERFLOW: Assign large pixel widths to site columns to trigger scrollbar
 for col in available_cols:
     col_config[col] = st.column_config.NumberColumn(
-        width="medium", 
+        width=300, 
         disabled=False
     )
 
@@ -95,7 +95,6 @@ edited_df = st.data_editor(
     column_config=col_config,
     disabled=["Laminate", "Code"] 
 )
-
 # --- 6. GROSS SUMMARY ---
 st.divider()
 st.subheader(f"📊 Gross Stock Summary - {selected_month}")
