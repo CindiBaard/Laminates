@@ -74,18 +74,20 @@ else:
 available_cols = [c for c in month_cols if c in st.session_state.df.columns]
 display_cols = ["Material", "Laminate", "Code"] + available_cols
 
-# Dynamic configuration to ensure all sites work and trigger scrolling
+# Initialize config with standard columns
 col_config = {
     "Material": st.column_config.TextColumn(pinned=True, width="medium"),
     "Laminate": st.column_config.TextColumn(disabled=True, width="medium"),
     "Code": st.column_config.TextColumn(disabled=True, width="small"),
 }
 
-# Apply explicit widths to the editable month columns to ensure the table overflows
+# FORCING SCROLLBAR: Explicitly define widths for the dynamic site columns
 for col in available_cols:
-    col_config[col] = st.column_config.NumberColumn(disabled=False, width="medium")
+    col_config[col] = st.column_config.NumberColumn(
+        width="medium", 
+        disabled=False
+    )
 
-# Apply the config to the editor
 edited_df = st.data_editor(
     st.session_state.df[display_cols],
     use_container_width=True,
