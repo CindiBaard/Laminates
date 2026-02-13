@@ -56,7 +56,6 @@ if st.sidebar.button("🔄 Sync with Google Sheets"):
 # --- 5. DATA EDITOR ---
 st.subheader(f"Update: {selected_site} ({selected_month})")
 
-# Define the dynamic column headers for the selected site
 if selected_site == "CliffordRd":
     month_cols = [
         f"CliffordRd_Rolls {selected_month}", 
@@ -65,7 +64,6 @@ if selected_site == "CliffordRd":
         f"SquareM {selected_month}"
     ]
 else:
-    # This handles KPark and HarrisDrive
     month_cols = [
         f"{selected_site}_Rolls {selected_month}", 
         f"{selected_site}_SlitRolls {selected_month}", 
@@ -73,34 +71,33 @@ else:
         f"{selected_site}_SquareM {selected_month}"
     ]
 
-# Identify columns that actually exist in the dataframe to avoid errors
 available_cols = [c for c in month_cols if c in st.session_state.df.columns]
 display_cols = ["Material", "Laminate", "Code"] + available_cols
 
-# Define the configuration for EVERY column to ensure visibility and editability
+# 1. Start with the fixed column configuration
 col_config = {
-    "Material": st.column_config.TextColumn(label="Material", pinned=True, width="medium"),
-    "Laminate": st.column_config.TextColumn(label="Laminate", disabled=True, width="medium"),
-    "Code": st.column_config.TextColumn(label="Code", disabled=True, width="small"),
+    "Material": st.column_config.TextColumn(label="Material", pinned=True, width=200),
+    "Laminate": st.column_config.TextColumn(label="Laminate", disabled=True, width=150),
+    "Code": st.column_config.TextColumn(label="Code", disabled=True, width=80), # Shrunk Code column
 }
 
-# DYNAMICALLY UNLOCK SITE COLUMNS:
-# This loop targets the specific columns for KPark/HarrisDrive and makes them editable
+# 2. DYNAMICALLY UNLOCK & WIDEN SITE COLUMNS:
+# This ensures that KPark and HarrisDrive columns are wide enough to force a scrollbar
 for col in available_cols:
     col_config[col] = st.column_config.NumberColumn(
         label=col,
-        width="medium",
-        disabled=False,  # <--- This UNLOCKS the column for editing
-        format="%d"      # Formats as an integer
+        width=250,      # Set to 250 to ensure they overflow the screen width
+        disabled=False,  # Unlocks the column for editing
+        format="%f"      # Supports decimal numbers for SquareM
     )
 
-# Render the editor
+# 3. Render the editor
 edited_df = st.data_editor(
     st.session_state.df[display_cols],
     use_container_width=True,
-    hide_index=True, # This removes the 'Index' column you mentioned
+    hide_index=True,
     column_config=col_config,
-    # We only disable the metadata columns
+    # We only disable the master data columns
     disabled=["Material", "Laminate", "Code"] 
 )
 # --- 6. GROSS SUMMARY ---
