@@ -71,23 +71,27 @@ else:
         f"{selected_site}_SquareM {selected_month}"
     ]
 
+# Identify columns present in the dataframe
 available_cols = [c for c in month_cols if c in st.session_state.df.columns]
 display_cols = ["Material", "Laminate", "Code"] + available_cols
 
-# Initialize config with standard columns
+# 1. Start with the fixed column configuration
 col_config = {
     "Material": st.column_config.TextColumn(pinned=True, width=250),
     "Laminate": st.column_config.TextColumn(disabled=True, width=200),
     "Code": st.column_config.TextColumn(disabled=True, width=100),
 }
 
-# FORCE OVERFLOW: Assign large pixel widths to site columns to trigger scrollbar
+# 2. DYNAMIC CORRECTION: Loop through the site-specific columns 
+# This forces them to be wide (triggering the scrollbar) and editable.
 for col in available_cols:
     col_config[col] = st.column_config.NumberColumn(
-        width=300, 
-        disabled=False
+        label=col,
+        width=300,  # Explicit width to force horizontal overflow
+        disabled=False # Ensures you can type in these cells
     )
 
+# 3. Render the editor with the dynamic config
 edited_df = st.data_editor(
     st.session_state.df[display_cols],
     use_container_width=True,
@@ -95,6 +99,7 @@ edited_df = st.data_editor(
     column_config=col_config,
     disabled=["Laminate", "Code"] 
 )
+What this fixes:
 # --- 6. GROSS SUMMARY ---
 st.divider()
 st.subheader(f"📊 Gross Stock Summary - {selected_month}")
