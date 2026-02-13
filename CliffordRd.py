@@ -74,28 +74,25 @@ else:
 available_cols = [c for c in month_cols if c in st.session_state.df.columns]
 display_cols = ["Material", "Laminate", "Code"] + available_cols
 
-# Define which columns are editable and pinned
-# Streamlit data_editor automatically freezes the header row.
+# Dynamic configuration to ensure all sites work and trigger scrolling
+col_config = {
+    "Material": st.column_config.TextColumn(pinned=True, width="medium"),
+    "Laminate": st.column_config.TextColumn(disabled=True, width="medium"),
+    "Code": st.column_config.TextColumn(disabled=True, width="small"),
+}
+
+# Apply explicit widths to the editable month columns to ensure the table overflows
+for col in available_cols:
+    col_config[col] = st.column_config.NumberColumn(disabled=False, width="medium")
+
+# Apply the config to the editor
 edited_df = st.data_editor(
     st.session_state.df[display_cols],
     use_container_width=True,
     hide_index=True,
-    column_config={
-        "Material": st.column_config.TextColumn(pinned=True), # Freezes the Material column
-        "Laminate": st.column_config.TextColumn(disabled=True),
-        "Code": st.column_config.TextColumn(disabled=True),
-    },
-    disabled=["Laminate", "Code"] # Specifically allows editing in the month_cols
+    column_config=col_config,
+    disabled=["Laminate", "Code"] 
 )
-
-if st.button("💾 Save Changes to Google Sheets"):
-    with st.spinner("Updating Google Sheet..."):
-        client = get_gspread_client()
-        sheet = client.open_by_key(SPREADSHEET_ID).sheet1
-        st.session_state.df.update(edited_df)
-        data_to_save = [st.session_state.df.columns.values.tolist()] + st.session_state.df.fillna('').values.tolist()
-        sheet.update(range_name='A1', values=data_to_save)
-        st.success(f"✅ Changes for {selected_site} saved!")
 
 # --- 6. GROSS SUMMARY ---
 st.divider()
