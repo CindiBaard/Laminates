@@ -44,7 +44,7 @@ st.sidebar.header("Location & Timing")
 site_options = ["CliffordRd", "KPark", "HarrisDrive"]
 selected_site = st.sidebar.selectbox("Select Site to Update", site_options)
 
-months = ["Janary", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 selected_month = st.sidebar.selectbox("Select Month", months)
 
 if st.sidebar.button("🔄 Sync with Google Sheets"):
