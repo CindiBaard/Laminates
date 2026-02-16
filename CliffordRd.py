@@ -30,7 +30,6 @@ def load_data():
     sheet = client.open_by_key(SPREADSHEET_ID).sheet1
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
-    # Clean column names of leading/trailing whitespace
     df.columns = [str(c).strip() for c in df.columns]
     return df, sheet
 
@@ -52,11 +51,6 @@ selected_site = st.sidebar.selectbox("Select Site to Update", site_options)
 months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 selected_month = st.sidebar.selectbox("Select Month", months)
 
-# --- DEBUG SECTION IN SIDEBAR ---
-with st.sidebar.expander("🔍 Column Auditor (Debug)"):
-    st.write("Columns found in Google Sheet:")
-    st.write(list(st.session_state.df.columns))
-
 if st.sidebar.button("🔄 Sync with Google Sheets"):
     with st.spinner("Fetching latest data..."):
         st.session_state.df, _ = load_data()
@@ -66,23 +60,13 @@ if st.sidebar.button("🔄 Sync with Google Sheets"):
 # --- 5. DATA EDITOR ---
 st.subheader(f"Update: {selected_site} ({selected_month})")
 
-# Explicit naming logic
-if selected_site == "CliffordRd":
-    month_cols = [
-        f"CliffordRd_Rolls {selected_month}", 
-        f"CliffordRd_SlitRolls {selected_month}", 
-        f"CliffordRd_Pallets {selected_month}", 
-        f"SquareM {selected_month}" 
-    ]
-else:
-    month_cols = [
-        f"{selected_site}_Rolls {selected_month}", 
-        f"{selected_site}_SlitRolls {selected_month}", 
-        f"{selected_site}_Pallets {selected_month}",
-        f"{selected_site}_SquareM {selected_month}"
-    ]
+# MATCHED TO YOUR DEBUG OUTPUT: All sites now follow the same prefix pattern
+month_cols = [
+    f"{selected_site}_Rolls {selected_month}", 
+    f"{selected_site}_Pallets {selected_month}",
+    f"{selected_site}_SquareM {selected_month}"
+]
 
-# Check which of our target columns actually exist in the dataframe
 available_cols = [c for c in month_cols if c in st.session_state.df.columns]
 display_cols = ["Material", "Laminate", "Code"] + available_cols
 
@@ -93,12 +77,8 @@ col_config = {
 }
 
 for col in available_cols:
-    # Rename the header for the user's view
-    if "SquareM" in col and selected_site == "CliffordRd":
-        clean_label = "CliffordRd SquareM"
-    else:
-        clean_label = col.split(" ")[0].replace("_", " ")
-        
+    # Creating a clean label (e.g., "Rolls", "Pallets", "SquareM")
+    clean_label = col.split("_")[1].split(" ")[0]
     col_config[col] = st.column_config.NumberColumn(
         label=clean_label,
         width="medium", 
@@ -106,11 +86,10 @@ for col in available_cols:
         required=False
     )
 
-# Forcing width to ensure horizontal scrollbar appears
 edited_df = st.data_editor(
     st.session_state.df[display_cols],
     use_container_width=False,
-    width=1400,
+    width=1200,
     hide_index=True,
     column_config=col_config,
     key="data_editor_key"
@@ -123,13 +102,12 @@ st.subheader(f"📊 Gross Stock Summary - {selected_month}")
 summary_list = []
 for _, row in st.session_state.df.iterrows():
     mat_sum = {"Material": row["Material"], "Code": row["Code"]}
-    for metric in ["Rolls", "SlitRolls", "Pallets", "SquareM"]:
+    for metric in ["Rolls", "Pallets", "SquareM"]:
         total = 0
         for site in site_options:
-            if site == "CliffordRd" and metric == "SquareM":
-                col = f"SquareM {selected_month}"
-            else:
-                col = f"{site}_{metric} {selected_month}"
+            # Check for February abbreviation mismatch found in your debug (item 22)
+            cur_month = "Feb" if (selected_month == "February" and site == "KPark" and metric == "SquareM") else selected_month
+            col = f"{site}_{metric} {cur_month}"
             
             val = row.get(col, 0)
             try:
@@ -144,7 +122,7 @@ st.dataframe(pd.DataFrame(summary_list), use_container_width=True)
 
 # --- 7. TRENDS ---
 st.divider()
-st.subheader("📈 Stock Usage Trends (CliffordRd)")
+st.subheader(f"📈 Stock Usage Trends ({selected_site})")
 unique_materials = st.session_state.df['Material'].unique()
 selected_mat = st.selectbox("Select Material for Trend View", unique_materials)
 selected_metric = st.radio("Select Metric", ["Rolls", "Pallets", "SquareM"], horizontal=True)
@@ -152,11 +130,10 @@ selected_metric = st.radio("Select Metric", ["Rolls", "Pallets", "SquareM"], hor
 mat_data = st.session_state.df[st.session_state.df['Material'] == selected_mat].iloc[0]
 trend_values = []
 for m in months:
-    if selected_metric == "SquareM":
-        col_name = f"SquareM {m}"
-    else:
-        col_name = f"CliffordRd_{selected_metric} {m}"
-        
+    # Handle the February/Feb inconsistency for KPark
+    cur_m = "Feb" if (m == "February" and selected_site == "KPark" and selected_metric == "SquareM") else m
+    col_name = f"{selected_site}_{selected_metric} {cur_m}"
+    
     val = mat_data.get(col_name, 0)
     try:
         clean_v = str(val).replace(',', '').strip()
@@ -165,5 +142,5 @@ for m in months:
         trend_values.append(0)
 
 plot_df = pd.DataFrame({'Month': months, 'Value': trend_values})
-fig = px.line(plot_df, x='Month', y='Value', title=f"CliffordRd: {selected_metric} Trend", markers=True)
+fig = px.line(plot_df, x='Month', y='Value', title=f"{selected_site}: {selected_metric} Trend", markers=True)
 st.plotly_chart(fig, use_container_width=True)
