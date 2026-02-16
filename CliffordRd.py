@@ -60,7 +60,6 @@ if st.sidebar.button("🔄 Sync with Google Sheets"):
 # --- 5. DATA EDITOR ---
 st.subheader(f"Update: {selected_site} ({selected_month})")
 
-# MATCHED TO YOUR DEBUG OUTPUT: All sites now follow the same prefix pattern
 month_cols = [
     f"{selected_site}_Rolls {selected_month}", 
     f"{selected_site}_Pallets {selected_month}",
@@ -77,7 +76,7 @@ col_config = {
 }
 
 for col in available_cols:
-    # Creating a clean label (e.g., "Rolls", "Pallets", "SquareM")
+    # Extract Metric Name (Rolls, Pallets, or SquareM)
     clean_label = col.split("_")[1].split(" ")[0]
     col_config[col] = st.column_config.NumberColumn(
         label=clean_label,
@@ -101,11 +100,19 @@ st.subheader(f"📊 Gross Stock Summary - {selected_month}")
 
 summary_list = []
 for _, row in st.session_state.df.iterrows():
-    mat_sum = {"Material": row["Material"], "Code": row["Code"]}
+    # Include the requested Static Columns from your Spreadsheet
+    mat_sum = {
+        "Material": row["Material"], 
+        "Code": row["Code"],
+        "Meters/Roll": row.get("Meters_per_Roll", 0),
+        "Rolls/Pallet": row.get("Rolls_on_Pallet", 0),
+        "m2/Pallet": row.get("m_Square_per_pallet", 0)
+    }
+    
     for metric in ["Rolls", "Pallets", "SquareM"]:
         total = 0
         for site in site_options:
-            # Check for February abbreviation mismatch found in your debug (item 22)
+            # Handle KPark Feb abbreviation typo found in debug
             cur_month = "Feb" if (selected_month == "February" and site == "KPark" and metric == "SquareM") else selected_month
             col = f"{site}_{metric} {cur_month}"
             
@@ -118,7 +125,9 @@ for _, row in st.session_state.df.iterrows():
         mat_sum[f"Gross {metric}"] = total
     summary_list.append(mat_sum)
 
-st.dataframe(pd.DataFrame(summary_list), use_container_width=True)
+# Reorder columns for better readability
+summary_df = pd.DataFrame(summary_list)
+st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
 # --- 7. TRENDS ---
 st.divider()
@@ -130,7 +139,6 @@ selected_metric = st.radio("Select Metric", ["Rolls", "Pallets", "SquareM"], hor
 mat_data = st.session_state.df[st.session_state.df['Material'] == selected_mat].iloc[0]
 trend_values = []
 for m in months:
-    # Handle the February/Feb inconsistency for KPark
     cur_m = "Feb" if (m == "February" and selected_site == "KPark" and selected_metric == "SquareM") else m
     col_name = f"{selected_site}_{selected_metric} {cur_m}"
     
