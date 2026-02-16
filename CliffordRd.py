@@ -60,13 +60,11 @@ if st.sidebar.button("🔄 Sync with Google Sheets"):
 # --- 5. DATA EDITOR ---
 st.subheader(f"Update: {selected_site} ({selected_month})")
 
-month_cols = [
-    f"{selected_site}_Rolls {selected_month}", 
-    f"{selected_site}_Pallets {selected_month}",
-    f"{selected_site}_SquareM {selected_month}"
-]
+roll_col = f"{selected_site}_Rolls {selected_month}"
+pallet_col = f"{selected_site}_Pallets {selected_month}"
+square_col = f"{selected_site}_SquareM {selected_month}"
 
-available_cols = [c for c in month_cols if c in st.session_state.df.columns]
+available_cols = [c for c in [roll_col, pallet_col, square_col] if c in st.session_state.df.columns]
 display_cols = ["Material", "Laminate", "Code"] + available_cols
 
 col_config = {
@@ -77,14 +75,14 @@ col_config = {
 
 for col in available_cols:
     clean_label = col.split("_")[1].split(" ")[0]
+    is_auto = "Pallets" in col or "SquareM" in col
     col_config[col] = st.column_config.NumberColumn(
         label=clean_label,
         width="medium", 
-        disabled=False,
-        required=False
+        disabled=is_auto,
+        help="Calculated automatically from Rolls" if is_auto else "Enter number of rolls"
     )
 
-# The Editor
 edited_df = st.data_editor(
     st.session_state.df[display_cols],
     use_container_width=False,
@@ -94,70 +92,90 @@ edited_df = st.data_editor(
     key="data_editor_key"
 )
 
-# SAVE BUTTON LOGIC
-if st.button("💾 Save Changes to Google Sheets"):
+# --- SAVE & DUAL AUTO-CALCULATE LOGIC ---
+if st.button("💾 Save & Update All Metrics"):
     try:
-        with st.spinner("Updating Google Sheets..."):
+        with st.spinner("Calculating Rolls vs Pallet Square Meterage..."):
             client = get_gspread_client()
             sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+            updates = []
             
-            # Identify which rows changed
-            # We iterate through the edited_df and update the original st.session_state.df
             for index, row in edited_df.iterrows():
-                for col in available_cols:
-                    new_value = row[col]
-                    # Update session state
-                    st.session_state.df.at[index, col] = new_value
-                    
-                    # Update Google Sheet (Row in sheet is index + 2 because of header)
-                    col_idx = st.session_state.df.columns.get_loc(col) + 1
-                    sheet.update_cell(index + 2, col_idx, new_value)
+                # Get reference constants from the sheet
+                m_per_roll = pd.to_numeric(st.session_state.df.at[index, "Meters_per_Roll"], errors='coerce') or 0
+                rolls_per_pal = pd.to_numeric(st.session_state.df.at[index, "Rolls_on_Pallet"], errors='coerce') or 1
+                
+                new_rolls = row[roll_col]
+                st.session_state.df.at[index, roll_col] = new_rolls
+                
+                # 1. Update Rolls
+                roll_idx = st.session_state.df.columns.get_loc(roll_col) + 1
+                updates.append({'range': gspread.utils.rowcol_to_a1(index + 2, roll_idx), 'values': [[new_rolls]]})
+                
+                # 2. Update Pallets (Rolls / Rolls per Pallet)
+                if pallet_col in st.session_state.df.columns:
+                    calc_pallets = round(new_rolls / rolls_per_pal, 2) if rolls_per_pal > 0 else 0
+                    st.session_state.df.at[index, pallet_col] = calc_pallets
+                    pal_idx = st.session_state.df.columns.get_loc(pallet_col) + 1
+                    updates.append({'range': gspread.utils.rowcol_to_a1(index + 2, pal_idx), 'values': [[calc_pallets]]})
+                
+                # 3. Update SquareM (Rolls * Meters per Roll)
+                if square_col in st.session_state.df.columns:
+                    calc_sqm = round(new_rolls * m_per_roll, 2)
+                    st.session_state.df.at[index, square_col] = calc_sqm
+                    sqm_idx = st.session_state.df.columns.get_loc(square_col) + 1
+                    updates.append({'range': gspread.utils.rowcol_to_a1(index + 2, sqm_idx), 'values': [[calc_sqm]]})
             
-            st.success("✅ Spreadsheet updated successfully!")
+            sheet.batch_update(updates)
+            st.success("✅ Success: All metrics updated!")
+            st.rerun()
+            
     except Exception as e:
-        st.error(f"❌ Error saving to Google Sheets: {e}")
+        st.error(f"❌ Calculation Error: {e}")
 
 # --- 6. GROSS SUMMARY ---
 st.divider()
 st.subheader(f"📊 Gross Stock Summary - {selected_month}")
 
 summary_list = []
-# Use the edited data for the summary calculation
 for index, row in st.session_state.df.iterrows():
+    m2_per_pallet = pd.to_numeric(row.get("m_Square_per_pallet", 0), errors='coerce') or 0
+    
     mat_sum = {
         "Material": row["Material"], 
         "Code": row["Code"],
         "Meters/Roll": row.get("Meters_per_Roll", 0),
-        "Rolls/Pallet": row.get("Rolls_on_Pallet", 0),
-        "m2/Pallet": row.get("m_Square_per_pallet", 0)
+        "m2/Pallet (Ref)": m2_per_pallet
     }
     
+    # Calculate totals across sites
+    site_totals = {"Rolls": 0, "Pallets": 0, "SquareM": 0}
     for metric in ["Rolls", "Pallets", "SquareM"]:
         total = 0
         for site in site_options:
             cur_month = "Feb" if (selected_month == "February" and site == "KPark" and metric == "SquareM") else selected_month
             col_name = f"{site}_{metric} {cur_month}"
-            
             val = row.get(col_name, 0)
             try:
-                clean_val = str(val).replace(',', '').strip()
-                total += float(clean_val) if clean_val != "" else 0
-            except (ValueError, TypeError):
-                pass
-        mat_sum[f"Gross {metric}"] = total
+                total += float(str(val).replace(',', '').strip()) if str(val).strip() != "" else 0
+            except: pass
+        site_totals[metric] = total
+
+    # Display both metrics in the summary
+    mat_sum["Gross Rolls"] = site_totals["Rolls"]
+    mat_sum["Gross Pallets"] = site_totals["Pallets"]
+    mat_sum["Total Area (Roll-based m2)"] = site_totals["SquareM"]
+    mat_sum["Total Area (Pallet-based m2)"] = round(site_totals["Pallets"] * m2_per_pallet, 2)
     
     summary_list.append(mat_sum)
 
-summary_df = pd.DataFrame(summary_list)
-
 st.dataframe(
-    summary_df, 
+    pd.DataFrame(summary_list), 
     use_container_width=True, 
     hide_index=True,
     column_config={
-        "Gross Rolls": st.column_config.NumberColumn(label="Gross Rolls", format="%d"),
-        "Gross Pallets": st.column_config.NumberColumn(label="Gross Pallets", format="%.1f"),
-        "Gross SquareM": st.column_config.NumberColumn(label="Gross SquareM", format="%.2f")
+        "Total Area (Roll-based m2)": st.column_config.NumberColumn(help="Sum of all SquareM columns (Rolls * Meters per Roll)"),
+        "Total Area (Pallet-based m2)": st.column_config.NumberColumn(help="Gross Pallets * m2 per Pallet reference")
     }
 )
 
@@ -165,22 +183,17 @@ st.dataframe(
 st.divider()
 st.subheader(f"📈 Stock Usage Trends ({selected_site})")
 unique_materials = st.session_state.df['Material'].unique()
-selected_mat = st.selectbox("Select Material for Trend View", unique_materials)
-selected_metric = st.radio("Select Metric", ["Rolls", "Pallets", "SquareM"], horizontal=True)
+selected_mat = st.selectbox("Select Material", unique_materials)
+selected_metric = st.radio("Metric", ["Rolls", "Pallets", "SquareM"], horizontal=True)
 
 mat_data = st.session_state.df[st.session_state.df['Material'] == selected_mat].iloc[0]
 trend_values = []
 for m in months:
     cur_m = "Feb" if (m == "February" and selected_site == "KPark" and selected_metric == "SquareM") else m
     col_name = f"{selected_site}_{selected_metric} {cur_m}"
-    
     val = mat_data.get(col_name, 0)
     try:
-        clean_v = str(val).replace(',', '').strip()
-        trend_values.append(float(clean_v) if clean_v != "" else 0)
-    except (ValueError, TypeError):
-        trend_values.append(0)
+        trend_values.append(float(str(val).replace(',', '').strip()) if str(val).strip() != "" else 0)
+    except: trend_values.append(0)
 
-plot_df = pd.DataFrame({'Month': months, 'Value': trend_values})
-fig = px.line(plot_df, x='Month', y='Value', title=f"{selected_site}: {selected_metric} Trend", markers=True)
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(px.line(pd.DataFrame({'Month': months, 'Value': trend_values}), x='Month', y='Value', markers=True), use_container_width=True)
