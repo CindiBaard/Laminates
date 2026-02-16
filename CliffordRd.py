@@ -84,6 +84,7 @@ for col in available_cols:
         required=False
     )
 
+# The Editor
 edited_df = st.data_editor(
     st.session_state.df[display_cols],
     use_container_width=False,
@@ -93,12 +94,36 @@ edited_df = st.data_editor(
     key="data_editor_key"
 )
 
+# SAVE BUTTON LOGIC
+if st.button("💾 Save Changes to Google Sheets"):
+    try:
+        with st.spinner("Updating Google Sheets..."):
+            client = get_gspread_client()
+            sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+            
+            # Identify which rows changed
+            # We iterate through the edited_df and update the original st.session_state.df
+            for index, row in edited_df.iterrows():
+                for col in available_cols:
+                    new_value = row[col]
+                    # Update session state
+                    st.session_state.df.at[index, col] = new_value
+                    
+                    # Update Google Sheet (Row in sheet is index + 2 because of header)
+                    col_idx = st.session_state.df.columns.get_loc(col) + 1
+                    sheet.update_cell(index + 2, col_idx, new_value)
+            
+            st.success("✅ Spreadsheet updated successfully!")
+    except Exception as e:
+        st.error(f"❌ Error saving to Google Sheets: {e}")
+
 # --- 6. GROSS SUMMARY ---
 st.divider()
 st.subheader(f"📊 Gross Stock Summary - {selected_month}")
 
 summary_list = []
-for _, row in st.session_state.df.iterrows():
+# Use the edited data for the summary calculation
+for index, row in st.session_state.df.iterrows():
     mat_sum = {
         "Material": row["Material"], 
         "Code": row["Code"],
@@ -107,38 +132,32 @@ for _, row in st.session_state.df.iterrows():
         "m2/Pallet": row.get("m_Square_per_pallet", 0)
     }
     
-    # Logic to sum across all three sites for each metric
     for metric in ["Rolls", "Pallets", "SquareM"]:
         total = 0
         for site in site_options:
-            # Handling the Feb/February inconsistency found in debug results
             cur_month = "Feb" if (selected_month == "February" and site == "KPark" and metric == "SquareM") else selected_month
             col_name = f"{site}_{metric} {cur_month}"
             
             val = row.get(col_name, 0)
             try:
-                # Convert potential strings with commas into clean floats
                 clean_val = str(val).replace(',', '').strip()
                 total += float(clean_val) if clean_val != "" else 0
             except (ValueError, TypeError):
                 pass
-        
-        # Add the total to the specific "Gross" column
         mat_sum[f"Gross {metric}"] = total
     
     summary_list.append(mat_sum)
 
 summary_df = pd.DataFrame(summary_list)
 
-# Explicitly defining the column configurations for the Summary Table
 st.dataframe(
     summary_df, 
     use_container_width=True, 
     hide_index=True,
     column_config={
-        "Gross Rolls": st.column_config.NumberColumn(label="Gross Rolls", format="%d", help="Total rolls across all sites"),
-        "Gross Pallets": st.column_config.NumberColumn(label="Gross Pallets", format="%.1f", help="Total pallets across all sites"),
-        "Gross SquareM": st.column_config.NumberColumn(label="Gross SquareM", format="%.2f", help="Total SquareM across all sites")
+        "Gross Rolls": st.column_config.NumberColumn(label="Gross Rolls", format="%d"),
+        "Gross Pallets": st.column_config.NumberColumn(label="Gross Pallets", format="%.1f"),
+        "Gross SquareM": st.column_config.NumberColumn(label="Gross SquareM", format="%.2f")
     }
 )
 
