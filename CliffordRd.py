@@ -99,7 +99,6 @@ st.subheader(f"📊 Gross Stock Summary - {selected_month}")
 
 summary_list = []
 for _, row in st.session_state.df.iterrows():
-    # Base row data
     mat_sum = {
         "Material": row["Material"], 
         "Code": row["Code"],
@@ -108,39 +107,38 @@ for _, row in st.session_state.df.iterrows():
         "m2/Pallet": row.get("m_Square_per_pallet", 0)
     }
     
-    # Calculate Gross totals for each metric
+    # Logic to sum across all three sites for each metric
     for metric in ["Rolls", "Pallets", "SquareM"]:
         total = 0
         for site in site_options:
-            # Handle the specific KPark Feb typo in your sheet
+            # Handling the Feb/February inconsistency found in debug results
             cur_month = "Feb" if (selected_month == "February" and site == "KPark" and metric == "SquareM") else selected_month
             col_name = f"{site}_{metric} {cur_month}"
             
             val = row.get(col_name, 0)
             try:
-                # Cleaning string values like "1,200" into floats
+                # Convert potential strings with commas into clean floats
                 clean_val = str(val).replace(',', '').strip()
                 total += float(clean_val) if clean_val != "" else 0
             except (ValueError, TypeError):
                 pass
         
-        # Add the sum to our dictionary
+        # Add the total to the specific "Gross" column
         mat_sum[f"Gross {metric}"] = total
     
     summary_list.append(mat_sum)
 
-# Create DataFrame and display
 summary_df = pd.DataFrame(summary_list)
 
-# Formatting Gross Rolls to be prominent
+# Explicitly defining the column configurations for the Summary Table
 st.dataframe(
     summary_df, 
     use_container_width=True, 
     hide_index=True,
     column_config={
-        "Gross Rolls": st.column_config.NumberColumn(format="%d", help="Sum of Rolls across all 3 sites"),
-        "Gross Pallets": st.column_config.NumberColumn(format="%.1f"),
-        "Gross SquareM": st.column_config.NumberColumn(format="%.2f")
+        "Gross Rolls": st.column_config.NumberColumn(label="Gross Rolls", format="%d", help="Total rolls across all sites"),
+        "Gross Pallets": st.column_config.NumberColumn(label="Gross Pallets", format="%.1f", help="Total pallets across all sites"),
+        "Gross SquareM": st.column_config.NumberColumn(label="Gross SquareM", format="%.2f", help="Total SquareM across all sites")
     }
 )
 
