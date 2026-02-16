@@ -98,7 +98,8 @@ if st.button("💾 Save Counts & Update Total Area"):
             updates = []
             
             for index, row in edited_df.iterrows():
-                m_per_roll = pd.to_numeric(st.session_state.df.at[index, "Meters_per_Roll"], errors='coerce') or 0
+                # Corrected logic: m2 per roll = (m2_per_pallet / rolls_on_pallet)
+                rolls_on_pal = pd.to_numeric(st.session_state.df.at[index, "Rolls_on_Pallet"], errors='coerce') or 1
                 m2_per_pallet = pd.to_numeric(st.session_state.df.at[index, "m_Square_per_pallet"], errors='coerce') or 0
                 
                 new_rolls = row[roll_col]
@@ -113,14 +114,17 @@ if st.button("💾 Save Counts & Update Total Area"):
                 updates.append({'range': gspread.utils.rowcol_to_a1(index + 2, pal_idx), 'values': [[new_pallets]]})
                 
                 if square_col in st.session_state.df.columns:
-                    # Logic: Total m2 = (Pallets * m2/Pallet) + (Rolls * Meters/Roll)
-                    calc_total_m2 = round((new_pallets * m2_per_pallet) + (new_rolls * m_per_roll), 2)
+                    # Logic: Total m2 = (Pallets * m2/Pallet) + (Rolls * (m2_per_pallet / rolls_on_pal))
+                    m2_from_pallets = new_pallets * m2_per_pallet
+                    m2_from_rolls = new_rolls * (m2_per_pallet / rolls_on_pal)
+                    calc_total_m2 = round(m2_from_pallets + m2_from_rolls, 2)
+                    
                     st.session_state.df.at[index, square_col] = calc_total_m2
                     sqm_idx = st.session_state.df.columns.get_loc(square_col) + 1
                     updates.append({'range': gspread.utils.rowcol_to_a1(index + 2, sqm_idx), 'values': [[calc_total_m2]]})
             
             sheet.batch_update(updates)
-            st.success("✅ Updates saved!")
+            st.success("✅ Updates saved with corrected area calculation!")
             st.rerun()
     except Exception as e:
         st.error(f"❌ Error: {e}")
@@ -131,7 +135,6 @@ st.subheader(f"📊 Gross Stock Summary - {selected_month}")
 
 summary_list = []
 for index, row in st.session_state.df.iterrows():
-    # Including the specific technical columns you requested
     mat_sum = {
         "Material": row["Material"], 
         "Code": row["Code"],
@@ -140,7 +143,6 @@ for index, row in st.session_state.df.iterrows():
         "m_Square_per_pallet": row.get("m_Square_per_pallet", 0)
     }
     
-    # Calculate aggregate totals across all sites
     for metric in ["Rolls", "Pallets", "SquareM"]:
         total = 0
         for site in site_options:
@@ -155,8 +157,6 @@ for index, row in st.session_state.df.iterrows():
     summary_list.append(mat_sum)
 
 summary_df = pd.DataFrame(summary_list)
-
-# Reordering columns for better readability
 final_cols = [
     "Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet",
     "Gross Rolls", "Gross Pallets", "Gross SquareM"
