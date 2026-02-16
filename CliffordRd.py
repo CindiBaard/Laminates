@@ -41,7 +41,7 @@ if 'df' not in st.session_state:
         st.error(f"⚠️ Authentication Error: {e}")
         st.stop()
 
-# --- 4. NAVIGATION ---
+# --- 4. NAVIGATION & SIDEBAR ALERTS ---
 st.title("📦 Multi-Site Laminate Stock Management")
 
 st.sidebar.header("Location & Timing")
@@ -51,13 +51,63 @@ selected_site = st.sidebar.selectbox("Select Site to Update", site_options)
 months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 selected_month = st.sidebar.selectbox("Select Month", months)
 
+# Define Low Stock Thresholds
+thresholds = {
+    "129 PBL": 5, "129 ABL White": 3, "113 ABL White": 7, "113 PBL": 5,
+    "082 PBL": 5, "082 ABL White": 2, "082 ABL Silver": 1, "129 ABL Silver": 1,
+    "113 ABL Silver": 1, "JUMBO ROLLS PBL": 3, "JUMBO ROLLS ABL White": 2,
+    "JUMBO ROLLS Silver": 1
+}
+
+# --- 5. DATA PROCESSING FOR SUMMARY (Needed for Alerts) ---
+summary_list = []
+low_stock_alerts = []
+
+for index, row in st.session_state.df.iterrows():
+    mat_name = str(row["Material"]).strip()
+    mat_sum = {
+        "Material": mat_name, 
+        "Code": row["Code"],
+        "Meters_per_Roll": row.get("Meters_per_Roll", 0),
+        "Rolls_on_Pallet": row.get("Rolls_on_Pallet", 0),
+        "m_Square_per_pallet": row.get("m_Square_per_pallet", 0)
+    }
+    
+    for metric in ["Rolls", "Pallets", "SquareM"]:
+        total = 0
+        for site in site_options:
+            cur_month = "Feb" if (selected_month == "February" and site == "KPark" and metric == "SquareM") else selected_month
+            col_name = f"{site}_{metric} {cur_month}"
+            val = row.get(col_name, 0)
+            try:
+                total += float(str(val).replace(',', '').strip()) if str(val).strip() != "" else 0
+            except: pass
+        mat_sum[f"Gross {metric}"] = total
+    
+    # Check for Low Stock for Sidebar Alerts
+    if mat_name in thresholds:
+        if mat_sum["Gross Pallets"] < thresholds[mat_name]:
+            low_stock_alerts.append(f"**{mat_name}**: {mat_sum['Gross Pallets']} (Min: {thresholds[mat_name]})")
+            
+    summary_list.append(mat_sum)
+
+summary_df = pd.DataFrame(summary_list)
+
+# Render Sidebar Alerts
+if low_stock_alerts:
+    st.sidebar.warning("⚠️ **Low Stock Alerts**")
+    for alert in low_stock_alerts:
+        st.sidebar.write(f"- {alert}")
+else:
+    st.sidebar.success("✅ All stock levels healthy")
+
 if st.sidebar.button("🔄 Sync with Google Sheets"):
     with st.spinner("Fetching latest data..."):
         st.session_state.df, _ = load_data()
         st.success("Data synchronized!")
         st.rerun()
 
-# --- 5. DATA EDITOR ---
+# --- 6. DATA EDITOR ---
 st.subheader(f"Update Physical Stock: {selected_site} ({selected_month})")
 
 roll_col = f"{selected_site}_Rolls {selected_month}"
@@ -89,7 +139,7 @@ edited_df = st.data_editor(
     key="data_editor_key"
 )
 
-# --- 6. SAVE & CALCULATION ---
+# --- 7. SAVE & CALCULATION ---
 if st.button("💾 Save Counts & Update Total Area"):
     try:
         with st.spinner("Updating spreadsheet..."):
@@ -127,42 +177,26 @@ if st.button("💾 Save Counts & Update Total Area"):
     except Exception as e:
         st.error(f"❌ Error: {e}")
 
-# --- 7. GROSS SUMMARY ---
+# --- 8. GROSS SUMMARY TABLE ---
 st.divider()
 st.subheader(f"📊 Gross Stock Summary - {selected_month}")
 
-summary_list = []
-for index, row in st.session_state.df.iterrows():
-    mat_sum = {
-        "Material": row["Material"], 
-        "Code": row["Code"],
-        "Meters_per_Roll": row.get("Meters_per_Roll", 0),
-        "Rolls_on_Pallet": row.get("Rolls_on_Pallet", 0),
-        "m_Square_per_pallet": row.get("m_Square_per_pallet", 0)
-    }
-    
-    for metric in ["Rolls", "Pallets", "SquareM"]:
-        total = 0
-        for site in site_options:
-            cur_month = "Feb" if (selected_month == "February" and site == "KPark" and metric == "SquareM") else selected_month
-            col_name = f"{site}_{metric} {cur_month}"
-            val = row.get(col_name, 0)
-            try:
-                total += float(str(val).replace(',', '').strip()) if str(val).strip() != "" else 0
-            except: pass
-        mat_sum[f"Gross {metric}"] = total
-    
-    summary_list.append(mat_sum)
-
-summary_df = pd.DataFrame(summary_list)
 final_cols = [
     "Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet",
     "Gross Rolls", "Gross Pallets", "Gross SquareM"
 ]
 
-# Displaying table with Grand Totals at the bottom
+def highlight_low_stock(row):
+    material = str(row["Material"]).strip()
+    gross_pallets = row["Gross Pallets"]
+    if material in thresholds and gross_pallets < thresholds[material]:
+        return ['background-color: #ff4b4b; color: white'] * len(row)
+    return [''] * len(row)
+
+styled_df = summary_df[final_cols].style.apply(highlight_low_stock, axis=1)
+
 st.dataframe(
-    summary_df[final_cols], 
+    styled_df, 
     use_container_width=True, 
     hide_index=True,
     column_config={
@@ -173,7 +207,7 @@ st.dataframe(
     }
 )
 
-# --- NEW: TOTALS BOX ---
+# Totals Metrics
 col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("Total Gross Rolls", f"{summary_df['Gross Rolls'].sum():,.0f}")
@@ -182,7 +216,7 @@ with col2:
 with col3:
     st.metric("Total Gross Area (m2)", f"{summary_df['Gross SquareM'].sum():,.2f}")
 
-# --- 8. TRENDS ---
+# --- 9. TRENDS ---
 st.divider()
 st.subheader(f"📈 Trends ({selected_site})")
 unique_materials = st.session_state.df['Material'].unique()
