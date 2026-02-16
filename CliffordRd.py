@@ -30,7 +30,7 @@ def load_data():
     sheet = client.open_by_key(SPREADSHEET_ID).sheet1
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
-    # Clean column names immediately to prevent matching errors
+    # Clean column names of leading/trailing whitespace
     df.columns = [str(c).strip() for c in df.columns]
     return df, sheet
 
@@ -52,6 +52,11 @@ selected_site = st.sidebar.selectbox("Select Site to Update", site_options)
 months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 selected_month = st.sidebar.selectbox("Select Month", months)
 
+# --- DEBUG SECTION IN SIDEBAR ---
+with st.sidebar.expander("🔍 Column Auditor (Debug)"):
+    st.write("Columns found in Google Sheet:")
+    st.write(list(st.session_state.df.columns))
+
 if st.sidebar.button("🔄 Sync with Google Sheets"):
     with st.spinner("Fetching latest data..."):
         st.session_state.df, _ = load_data()
@@ -61,6 +66,7 @@ if st.sidebar.button("🔄 Sync with Google Sheets"):
 # --- 5. DATA EDITOR ---
 st.subheader(f"Update: {selected_site} ({selected_month})")
 
+# Explicit naming logic
 if selected_site == "CliffordRd":
     month_cols = [
         f"CliffordRd_Rolls {selected_month}", 
@@ -76,7 +82,7 @@ else:
         f"{selected_site}_SquareM {selected_month}"
     ]
 
-# Ensure we catch the columns even if capitalization or spacing is slightly off
+# Check which of our target columns actually exist in the dataframe
 available_cols = [c for c in month_cols if c in st.session_state.df.columns]
 display_cols = ["Material", "Laminate", "Code"] + available_cols
 
@@ -87,7 +93,12 @@ col_config = {
 }
 
 for col in available_cols:
-    clean_label = "CliffordRd SquareM" if "SquareM" in col and selected_site == "CliffordRd" else col.split(" ")[0].replace("_", " ")
+    # Rename the header for the user's view
+    if "SquareM" in col and selected_site == "CliffordRd":
+        clean_label = "CliffordRd SquareM"
+    else:
+        clean_label = col.split(" ")[0].replace("_", " ")
+        
     col_config[col] = st.column_config.NumberColumn(
         label=clean_label,
         width="medium", 
@@ -95,12 +106,11 @@ for col in available_cols:
         required=False
     )
 
-# use_container_width=False + width=1200 forces the horizontal scrollbar 
-# if the window is smaller than the table
+# Forcing width to ensure horizontal scrollbar appears
 edited_df = st.data_editor(
     st.session_state.df[display_cols],
     use_container_width=False,
-    width=1200,
+    width=1400,
     hide_index=True,
     column_config=col_config,
     key="data_editor_key"
