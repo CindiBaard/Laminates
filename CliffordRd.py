@@ -29,7 +29,10 @@ def load_data():
     client = get_gspread_client()
     sheet = client.open_by_key(SPREADSHEET_ID).sheet1
     data = sheet.get_all_records()
-    return pd.DataFrame(data), sheet
+    df = pd.DataFrame(data)
+    # Clean column names immediately to prevent matching errors
+    df.columns = [str(c).strip() for c in df.columns]
+    return df, sheet
 
 # --- 3. SESSION STATE ---
 if 'df' not in st.session_state:
@@ -73,6 +76,7 @@ else:
         f"{selected_site}_SquareM {selected_month}"
     ]
 
+# Ensure we catch the columns even if capitalization or spacing is slightly off
 available_cols = [c for c in month_cols if c in st.session_state.df.columns]
 display_cols = ["Material", "Laminate", "Code"] + available_cols
 
@@ -83,7 +87,6 @@ col_config = {
 }
 
 for col in available_cols:
-    # Improved label logic to ensure SquareM shows up clearly
     clean_label = "CliffordRd SquareM" if "SquareM" in col and selected_site == "CliffordRd" else col.split(" ")[0].replace("_", " ")
     col_config[col] = st.column_config.NumberColumn(
         label=clean_label,
@@ -92,9 +95,12 @@ for col in available_cols:
         required=False
     )
 
+# use_container_width=False + width=1200 forces the horizontal scrollbar 
+# if the window is smaller than the table
 edited_df = st.data_editor(
     st.session_state.df[display_cols],
-    use_container_width=True,  
+    use_container_width=False,
+    width=1200,
     hide_index=True,
     column_config=col_config,
     key="data_editor_key"
@@ -110,7 +116,6 @@ for _, row in st.session_state.df.iterrows():
     for metric in ["Rolls", "SlitRolls", "Pallets", "SquareM"]:
         total = 0
         for site in site_options:
-            # Fixed mapping logic to ensure CliffordRd SquareM is caught
             if site == "CliffordRd" and metric == "SquareM":
                 col = f"SquareM {selected_month}"
             else:
@@ -118,7 +123,6 @@ for _, row in st.session_state.df.iterrows():
             
             val = row.get(col, 0)
             try:
-                # Handle formatted numbers (commas) and empty strings
                 clean_val = str(val).replace(',', '').strip()
                 total += float(clean_val) if clean_val != "" else 0
             except (ValueError, TypeError):
@@ -138,7 +142,6 @@ selected_metric = st.radio("Select Metric", ["Rolls", "Pallets", "SquareM"], hor
 mat_data = st.session_state.df[st.session_state.df['Material'] == selected_mat].iloc[0]
 trend_values = []
 for m in months:
-    # Fixed naming for the Trend Plot
     if selected_metric == "SquareM":
         col_name = f"SquareM {m}"
     else:
