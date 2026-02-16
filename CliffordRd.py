@@ -51,15 +51,24 @@ selected_site = st.sidebar.selectbox("Select Site to Update", site_options)
 months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 selected_month = st.sidebar.selectbox("Select Month", months)
 
-# Define Low Stock Thresholds
+# Define Low Stock Thresholds (Mixed Units)
+# Note: Silver variants are now roll-based (20 rolls), others remain pallet-based
 thresholds = {
-    "129 PBL": 5, "129 ABL White": 3, "113 ABL White": 7, "113 PBL": 5,
-    "082 PBL": 5, "082 ABL White": 2, "082 ABL Silver": 1, "129 ABL Silver": 1,
-    "113 ABL Silver": 1, "JUMBO ROLLS PBL": 3, "JUMBO ROLLS ABL White": 2,
-    "JUMBO ROLLS Silver": 1
+    "129 PBL": {"val": 5, "unit": "Pallets"},
+    "129 ABL White": {"val": 3, "unit": "Pallets"},
+    "113 ABL White": {"val": 7, "unit": "Pallets"},
+    "113 PBL": {"val": 5, "unit": "Pallets"},
+    "082 PBL": {"val": 5, "unit": "Pallets"},
+    "082 ABL White": {"val": 2, "unit": "Pallets"},
+    "082 ABL Silver": {"val": 20, "unit": "Rolls"},   # Updated to Rolls
+    "129 ABL Silver": {"val": 20, "unit": "Rolls"},   # Updated to Rolls
+    "113 ABL Silver": {"val": 20, "unit": "Rolls"},   # Updated to Rolls
+    "JUMBO ROLLS PBL": {"val": 3, "unit": "Pallets"},
+    "JUMBO ROLLS ABL White": {"val": 2, "unit": "Pallets"},
+    "JUMBO ROLLS Silver": {"val": 1, "unit": "Pallets"}
 }
 
-# --- 5. DATA PROCESSING FOR SUMMARY (Needed for Alerts) ---
+# --- 5. DATA PROCESSING FOR SUMMARY ---
 summary_list = []
 low_stock_alerts = []
 
@@ -86,8 +95,10 @@ for index, row in st.session_state.df.iterrows():
     
     # Check for Low Stock for Sidebar Alerts
     if mat_name in thresholds:
-        if mat_sum["Gross Pallets"] < thresholds[mat_name]:
-            low_stock_alerts.append(f"**{mat_name}**: {mat_sum['Gross Pallets']} (Min: {thresholds[mat_name]})")
+        t_info = thresholds[mat_name]
+        current_val = mat_sum[f"Gross {t_info['unit']}"]
+        if current_val < t_info['val']:
+            low_stock_alerts.append(f"**{mat_name}**: {current_val} {t_info['unit']} (Min: {t_info['val']})")
             
     summary_list.append(mat_sum)
 
@@ -188,9 +199,11 @@ final_cols = [
 
 def highlight_low_stock(row):
     material = str(row["Material"]).strip()
-    gross_pallets = row["Gross Pallets"]
-    if material in thresholds and gross_pallets < thresholds[material]:
-        return ['background-color: #ff4b4b; color: white'] * len(row)
+    if material in thresholds:
+        t_info = thresholds[material]
+        current_val = row[f"Gross {t_info['unit']}"]
+        if current_val < t_info['val']:
+            return ['background-color: #ff4b4b; color: white'] * len(row)
     return [''] * len(row)
 
 styled_df = summary_df[final_cols].style.apply(highlight_low_stock, axis=1)
