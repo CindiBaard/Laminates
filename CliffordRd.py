@@ -98,7 +98,6 @@ if st.button("💾 Save Counts & Update Total Area"):
             updates = []
             
             for index, row in edited_df.iterrows():
-                # Corrected logic: m2 per roll = (m2_per_pallet / rolls_on_pallet)
                 rolls_on_pal = pd.to_numeric(st.session_state.df.at[index, "Rolls_on_Pallet"], errors='coerce') or 1
                 m2_per_pallet = pd.to_numeric(st.session_state.df.at[index, "m_Square_per_pallet"], errors='coerce') or 0
                 
@@ -114,7 +113,6 @@ if st.button("💾 Save Counts & Update Total Area"):
                 updates.append({'range': gspread.utils.rowcol_to_a1(index + 2, pal_idx), 'values': [[new_pallets]]})
                 
                 if square_col in st.session_state.df.columns:
-                    # Logic: Total m2 = (Pallets * m2/Pallet) + (Rolls * (m2_per_pallet / rolls_on_pal))
                     m2_from_pallets = new_pallets * m2_per_pallet
                     m2_from_rolls = new_rolls * (m2_per_pallet / rolls_on_pal)
                     calc_total_m2 = round(m2_from_pallets + m2_from_rolls, 2)
@@ -162,6 +160,7 @@ final_cols = [
     "Gross Rolls", "Gross Pallets", "Gross SquareM"
 ]
 
+# Displaying table with Grand Totals at the bottom
 st.dataframe(
     summary_df[final_cols], 
     use_container_width=True, 
@@ -173,6 +172,15 @@ st.dataframe(
         "Gross SquareM": st.column_config.NumberColumn(label="Total Gross m2", format="%.2f")
     }
 )
+
+# --- NEW: TOTALS BOX ---
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("Total Gross Rolls", f"{summary_df['Gross Rolls'].sum():,.0f}")
+with col2:
+    st.metric("Total Gross Pallets", f"{summary_df['Gross Pallets'].sum():,.2f}")
+with col3:
+    st.metric("Total Gross Area (m2)", f"{summary_df['Gross SquareM'].sum():,.2f}")
 
 # --- 8. TRENDS ---
 st.divider()
