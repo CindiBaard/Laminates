@@ -64,7 +64,6 @@ roll_col = f"{selected_site}_Rolls {selected_month}"
 pallet_col = f"{selected_site}_Pallets {selected_month}"
 square_col = f"{selected_site}_SquareM {selected_month}"
 
-# Ensure we are identifying columns correctly for the editor
 available_cols = [c for c in [roll_col, pallet_col, square_col] if c in st.session_state.df.columns]
 display_cols = ["Material", "Laminate", "Code"] + available_cols
 
@@ -76,15 +75,9 @@ col_config = {
 
 for col in available_cols:
     clean_label = col.split("_")[1].split(" ")[0]
-    
-    # LOGIC CHANGE: Only SquareM is disabled. Rolls and Pallets are enabled.
     is_disabled = "SquareM" in col 
-    
     col_config[col] = st.column_config.NumberColumn(
-        label=clean_label,
-        width="medium", 
-        disabled=is_disabled,
-        help="Calculated Total Area" if is_disabled else f"Enter number of {clean_label}"
+        label=clean_label, width="medium", disabled=is_disabled
     )
 
 edited_df = st.data_editor(
@@ -105,37 +98,32 @@ if st.button("💾 Save Counts & Update Total Area"):
             updates = []
             
             for index, row in edited_df.iterrows():
-                # Reference constants for the math
                 m_per_roll = pd.to_numeric(st.session_state.df.at[index, "Meters_per_Roll"], errors='coerce') or 0
                 m2_per_pallet = pd.to_numeric(st.session_state.df.at[index, "m_Square_per_pallet"], errors='coerce') or 0
                 
-                # Get current edits
                 new_rolls = row[roll_col]
                 new_pallets = row[pallet_col]
                 
-                # Update Session State DF
                 st.session_state.df.at[index, roll_col] = new_rolls
                 st.session_state.df.at[index, pallet_col] = new_pallets
                 
-                # Prepare Batch Updates
                 roll_idx = st.session_state.df.columns.get_loc(roll_col) + 1
                 pal_idx = st.session_state.df.columns.get_loc(pallet_col) + 1
                 updates.append({'range': gspread.utils.rowcol_to_a1(index + 2, roll_idx), 'values': [[new_rolls]]})
                 updates.append({'range': gspread.utils.rowcol_to_a1(index + 2, pal_idx), 'values': [[new_pallets]]})
                 
-                # AUTO-CALC SQUAREM: (Pallets * m2/Pallet) + (Rolls * Meters/Roll)
                 if square_col in st.session_state.df.columns:
+                    # Logic: Total m2 = (Pallets * m2/Pallet) + (Rolls * Meters/Roll)
                     calc_total_m2 = round((new_pallets * m2_per_pallet) + (new_rolls * m_per_roll), 2)
                     st.session_state.df.at[index, square_col] = calc_total_m2
                     sqm_idx = st.session_state.df.columns.get_loc(square_col) + 1
                     updates.append({'range': gspread.utils.rowcol_to_a1(index + 2, sqm_idx), 'values': [[calc_total_m2]]})
             
             sheet.batch_update(updates)
-            st.success("✅ Pallets and Rolls saved. Total m2 updated!")
+            st.success("✅ Updates saved!")
             st.rerun()
-            
     except Exception as e:
-        st.error(f"❌ Save Error: {e}")
+        st.error(f"❌ Error: {e}")
 
 # --- 7. GROSS SUMMARY ---
 st.divider()
@@ -143,7 +131,16 @@ st.subheader(f"📊 Gross Stock Summary - {selected_month}")
 
 summary_list = []
 for index, row in st.session_state.df.iterrows():
-    mat_sum = {"Material": row["Material"], "Code": row["Code"]}
+    # Including the specific technical columns you requested
+    mat_sum = {
+        "Material": row["Material"], 
+        "Code": row["Code"],
+        "Meters_per_Roll": row.get("Meters_per_Roll", 0),
+        "Rolls_on_Pallet": row.get("Rolls_on_Pallet", 0),
+        "m_Square_per_pallet": row.get("m_Square_per_pallet", 0)
+    }
+    
+    # Calculate aggregate totals across all sites
     for metric in ["Rolls", "Pallets", "SquareM"]:
         total = 0
         for site in site_options:
@@ -154,9 +151,28 @@ for index, row in st.session_state.df.iterrows():
                 total += float(str(val).replace(',', '').strip()) if str(val).strip() != "" else 0
             except: pass
         mat_sum[f"Gross {metric}"] = total
+    
     summary_list.append(mat_sum)
 
-st.dataframe(pd.DataFrame(summary_list), use_container_width=True, hide_index=True)
+summary_df = pd.DataFrame(summary_list)
+
+# Reordering columns for better readability
+final_cols = [
+    "Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet",
+    "Gross Rolls", "Gross Pallets", "Gross SquareM"
+]
+
+st.dataframe(
+    summary_df[final_cols], 
+    use_container_width=True, 
+    hide_index=True,
+    column_config={
+        "Meters_per_Roll": st.column_config.NumberColumn(label="Mtrs/Roll"),
+        "Rolls_on_Pallet": st.column_config.NumberColumn(label="Rolls/Pallet"),
+        "m_Square_per_pallet": st.column_config.NumberColumn(label="m2/Pallet"),
+        "Gross SquareM": st.column_config.NumberColumn(label="Total Gross m2", format="%.2f")
+    }
+)
 
 # --- 8. TRENDS ---
 st.divider()
