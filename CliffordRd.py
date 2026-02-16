@@ -16,13 +16,17 @@ API_SCOPES = [
 # --- 2. AUTHENTICATION & CONNECTION ---
 def get_gspread_client():
     creds_info = dict(st.secrets["gcp_service_account"])
+    
+    # Simple, clean handling of the private key
     if "private_key" in creds_info:
-        key = creds_info["private_key"]
-        key = key.replace("\\\\n", "\n").replace("\\n", "\n")
-        creds_info["private_key"] = key.strip()
-    creds = service_account.Credentials.from_service_account_info(creds_info, scopes=API_SCOPES)
+        # This handles keys whether they are one long string or have literal \n
+        creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
+        
+    creds = service_account.Credentials.from_service_account_info(
+        creds_info, 
+        scopes=API_SCOPES
+    )
     return gspread.authorize(creds)
-
 def load_data():
     client = get_gspread_client()
     sheet = client.open_by_key(SPREADSHEET_ID).sheet1
@@ -62,7 +66,7 @@ if selected_site == "CliffordRd":
         f"CliffordRd_Rolls {selected_month}", 
         f"CliffordRd_SlitRolls {selected_month}", 
         f"CliffordRd_Pallets {selected_month}", 
-        f"SquareM {selected_month}"
+        f"SquareM {selected_month}"  # Fixed: Match the actual Sheet column name
     ]
 else:
     month_cols = [
@@ -72,37 +76,35 @@ else:
         f"{selected_site}_SquareM {selected_month}"
     ]
 
-# Filter to ensure we only look for columns that exist in the CSV/Sheet
+# Filter to ensure we only look for columns that exist in the Sheet
 available_cols = [c for c in month_cols if c in st.session_state.df.columns]
 display_cols = ["Material", "Laminate", "Code"] + available_cols
 
 # 1. Base Configuration
 col_config = {
-    "Material": st.column_config.TextColumn(label="Material", pinned=True, width=200),
-    "Laminate": st.column_config.TextColumn(label="Laminate", disabled=True, width=150),
-    "Code": st.column_config.TextColumn(label="Code", disabled=True, width=80),
+    "Material": st.column_config.TextColumn(label="Material", pinned=True, width="medium"),
+    "Laminate": st.column_config.TextColumn(label="Laminate", disabled=True, width="small"),
+    "Code": st.column_config.TextColumn(label="Code", disabled=True, width="small"),
 }
 
-# 2. Force Editability and Width for Site Columns
-# We use fixed pixel widths (300) to guarantee overflow
+# 2. Force Editability for Site Columns
 for col in available_cols:
+    # We strip the month off the label for a cleaner UI
+    clean_label = col.split(" ")[0].replace("_", " ")
     col_config[col] = st.column_config.NumberColumn(
-        label=col,
-        width=300, 
-        disabled=False, # This MUST be False to allow editing
+        label=clean_label,
+        width="medium", 
+        disabled=False,
         required=False
     )
 
 # 3. The Editor Call
-# use_container_width is set to False to force the scrollbar to appear
-# if the columns exceed the screen size.
 edited_df = st.data_editor(
     st.session_state.df[display_cols],
-    use_container_width=False,  
-    width=1600,                 # Forces a wide frame
+    use_container_width=True,  
     hide_index=True,
     column_config=col_config,
-    disabled=["Material", "Laminate", "Code"]
+    key="data_editor_key" # Added key for better state management
 )
 # --- 6. GROSS SUMMARY ---
 st.divider()
