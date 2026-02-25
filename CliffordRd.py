@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 from google.oauth2 import service_account
 import gspread
+import io
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Laminate Stock Manager", layout="wide")
@@ -59,7 +60,7 @@ thresholds = {
     "JUMBO ROLLS Silver": {"val": 1, "target": 2, "unit": "Pallets"}
 }
 
-# --- 5. DATA EDITOR (Moved up so edited values are available for calc) ---
+# --- 5. DATA EDITOR ---
 st.title("📦 Multi-Site Laminate Stock Management")
 st.subheader(f"Update Physical Stock: {selected_site} ({selected_month})")
 
@@ -77,10 +78,9 @@ col_config = {
 for col in available_cols:
     col_config[col] = st.column_config.NumberColumn(step=0.5, format="%.1f", disabled=("SquareM" in col))
 
-# capturing live edits
 edited_df = st.data_editor(st.session_state.df[display_cols], use_container_width=True, hide_index=True, column_config=col_config)
 
-# --- 6. DATA PROCESSING & REORDER LOGIC ---
+# --- 6. LIVE DATA PROCESSING (Includes live edits) ---
 summary_list = []
 low_stock_alerts = []
 reorder_needed = []
@@ -88,20 +88,16 @@ reorder_needed = []
 for index, row in st.session_state.df.iterrows():
     mat_name = str(row["Material"]).strip()
     mat_sum = {"Material": mat_name, "Code": row["Code"]}
-    
-    # Use edited_df values for the active site, otherwise use session_state data
     edited_row = edited_df.iloc[index]
     
     for metric in ["Rolls", "Pallets", "SquareM"]:
         total = 0
         for site in site_options:
             col_name = f"{site}_{metric} {selected_month}"
-            # If this is the site we are currently editing, take the value from the table
             if site == selected_site and col_name in edited_row:
                 val = edited_row[col_name]
             else:
                 val = row.get(col_name, 0)
-                
             try: total += float(str(val).replace(',', '').strip()) if str(val).strip() != "" else 0
             except: pass
         mat_sum[f"Gross {metric}"] = total
@@ -111,18 +107,18 @@ for index, row in st.session_state.df.iterrows():
         current_val = mat_sum[f"Gross {t_info['unit']}"]
         if current_val < t_info['val']:
             low_stock_alerts.append(f"**{mat_name}**: {current_val} {t_info['unit']} (Min: {t_info['val']})")
-            gap = max(0, t_info['target'] - current_val)
+            gap = max(0.0, float(t_info['target']) - float(current_val))
             reorder_needed.append({
                 "Material": mat_name,
                 "Current": current_val,
                 "Target": t_info['target'],
-                "Order Qty": f"{gap} {t_info['unit']}"
+                "Order Qty": f"{gap:.1f} {t_info['unit']}"
             })
     summary_list.append(mat_sum)
 
 summary_df = pd.DataFrame(summary_list)
 
-# Sidebar UI
+# Sidebar Alerts
 if low_stock_alerts:
     st.sidebar.warning("⚠️ **Low Stock Alerts**")
     for alert in low_stock_alerts: st.sidebar.write(f"- {alert}")
@@ -151,12 +147,23 @@ if st.button("💾 Save Counts"):
             st.rerun()
     except Exception as e: st.error(f"Error: {e}")
 
-# --- 8. REORDER REPORT & SUMMARY ---
+# --- 8. REORDER REPORT & EXPORT ---
 if reorder_needed:
     st.divider()
     st.subheader("🛒 Reorder Report (Required to hit Targets)")
-    st.table(pd.DataFrame(reorder_needed))
+    reorder_df = pd.DataFrame(reorder_needed)
+    st.table(reorder_df)
+    
+    # Download Button for Reorder Report
+    csv = reorder_df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Download Reorder List (CSV)",
+        data=csv,
+        file_name=f"Reorder_Report_{selected_month}_{selected_site}.csv",
+        mime="text/csv",
+    )
 
+# --- 9. GROSS SUMMARY TABLE ---
 st.divider()
 st.subheader(f"📊 Gross Stock Summary - {selected_month}")
 def highlight_low_stock(row):
