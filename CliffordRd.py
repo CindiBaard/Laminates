@@ -14,6 +14,14 @@ API_SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
+# Weight and Container Constants
+WEIGHT_FACTORS = {
+    "Pallet_Avg_KG": 850.0,
+    "Roll_Avg_KG": 25.0
+}
+CONTAINER_LIMIT_KG = 18000.0  # Max KG for a standard 20ft container load
+CONTAINER_LIMIT_PALLETS = 10.0 # Max pallet spaces for a 20ft container
+
 # --- 2. AUTHENTICATION & CONNECTION ---
 def get_gspread_client():
     creds_info = dict(st.secrets["gcp_service_account"])
@@ -80,10 +88,12 @@ for col in available_cols:
 
 edited_df = st.data_editor(st.session_state.df[display_cols], use_container_width=True, hide_index=True, column_config=col_config)
 
-# --- 6. LIVE DATA PROCESSING (Includes live edits) ---
+# --- 6. LIVE DATA PROCESSING ---
 summary_list = []
 low_stock_alerts = []
 reorder_needed = []
+total_est_weight_kg = 0.0
+total_pallets_to_order = 0.0
 
 for index, row in st.session_state.df.iterrows():
     mat_name = str(row["Material"]).strip()
@@ -108,11 +118,22 @@ for index, row in st.session_state.df.iterrows():
         if current_val < t_info['val']:
             low_stock_alerts.append(f"**{mat_name}**: {current_val} {t_info['unit']} (Min: {t_info['val']})")
             gap = max(0.0, float(t_info['target']) - float(current_val))
+            
+            item_weight = 0.0
+            if t_info['unit'] == "Pallets":
+                item_weight = gap * WEIGHT_FACTORS["Pallet_Avg_KG"]
+                total_pallets_to_order += gap
+            else:
+                item_weight = gap * WEIGHT_FACTORS["Roll_Avg_KG"]
+            
+            total_est_weight_kg += item_weight
+
             reorder_needed.append({
                 "Material": mat_name,
                 "Current": current_val,
                 "Target": t_info['target'],
-                "Order Qty": f"{gap:.1f} {t_info['unit']}"
+                "Order Qty": f"{gap:.1f} {t_info['unit']}",
+                "Est. Weight (KG)": round(item_weight, 1)
             })
     summary_list.append(mat_sum)
 
@@ -147,19 +168,41 @@ if st.button("💾 Save Counts"):
             st.rerun()
     except Exception as e: st.error(f"Error: {e}")
 
-# --- 8. REORDER REPORT & EXPORT ---
+# --- 8. REORDER REPORT & FREIGHT PLANNING ---
 if reorder_needed:
     st.divider()
-    st.subheader("🛒 Reorder Report (Required to hit Targets)")
-    reorder_df = pd.DataFrame(reorder_needed)
-    st.table(reorder_df)
+    col_a, col_b = st.columns([2, 1])
     
-    # Download Button for Reorder Report
+    with col_a:
+        st.subheader("🛒 Reorder Report")
+        reorder_df = pd.DataFrame(reorder_needed)
+        st.table(reorder_df)
+    
+    with col_b:
+        st.subheader("🚛 Freight Planning (20ft Load)")
+        
+        # Capacity Calculations
+        weight_cap = min(total_est_weight_kg / CONTAINER_LIMIT_KG, 1.0)
+        pallet_cap = min(total_pallets_to_order / CONTAINER_LIMIT_PALLETS, 1.0)
+        
+        st.write(f"**Weight Capacity ({total_est_weight_kg/1000:.2f}T / {CONTAINER_LIMIT_KG/1000:.0f}T)**")
+        st.progress(weight_cap)
+        
+        st.write(f"**Pallet Space ({total_pallets_to_order:.1f} / {CONTAINER_LIMIT_PALLETS:.0f})**")
+        st.progress(pallet_cap)
+        
+        if weight_cap >= 1.0 or pallet_cap >= 1.0:
+            st.error("🚨 Container capacity exceeded!")
+        elif weight_cap > 0.8 or pallet_cap > 0.8:
+            st.warning("⚠️ Container almost full.")
+        else:
+            st.info("🟢 Capacity available.")
+
     csv = reorder_df.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="📥 Download Reorder List (CSV)",
         data=csv,
-        file_name=f"Reorder_Report_{selected_month}_{selected_site}.csv",
+        file_name=f"Reorder_Report_{selected_month}.csv",
         mime="text/csv",
     )
 
