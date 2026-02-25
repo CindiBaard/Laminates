@@ -48,9 +48,9 @@ thresholds = {
     "113 PBL": {"min": 5, "target": 15, "unit": "Pallets"},
     "082 PBL": {"min": 5, "target": 15, "unit": "Pallets"},
     "082 ABL White": {"min": 2, "target": 8, "unit": "Pallets"},
-    "082 ABL Silver": {"min": 20, "target": 100, "unit": "Rolls"},
-    "129 ABL Silver": {"min": 20, "target": 100, "unit": "Rolls"},
-    "113 ABL Silver": {"min": 20, "target": 100, "unit": "Rolls"}
+    "082 ABL Silver": {"min": 0.5, "target": 1, "unit": "Pallet"},
+    "129 ABL Silver": {"min": 0.5, "target": 1, "unit": "Pallet"},
+    "113 ABL Silver": {"min": 0.5, "target": 1, "unit": "Pallet"}
 }
 
 tab_update, tab_summary, tab_reorder, tab_trends = st.tabs([
