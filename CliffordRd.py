@@ -3,152 +3,245 @@ import pandas as pd
 import plotly.express as px
 from google.oauth2 import service_account
 import gspread
-from datetime import datetime
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Laminate Stock Manager", layout="wide")
 
 SPREADSHEET_ID = "1Yq-sZ33JsXNUyw_UwYCvSO3CSKdpubZDUtq6_cv86Uo"
-API_SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+API_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
 
-# --- 2. AUTH & DATA ---
+# --- 2. AUTHENTICATION & CONNECTION ---
 def get_gspread_client():
     creds_info = dict(st.secrets["gcp_service_account"])
     if "private_key" in creds_info:
         creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
-    creds = service_account.Credentials.from_service_account_info(creds_info, scopes=API_SCOPES)
+        
+    creds = service_account.Credentials.from_service_account_info(
+        creds_info, 
+        scopes=API_SCOPES
+    )
     return gspread.authorize(creds)
 
 def load_data():
     client = get_gspread_client()
-    ss = client.open_by_key(SPREADSHEET_ID)
-    df = pd.DataFrame(ss.sheet1.get_all_records())
+    sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+    data = sheet.get_all_records()
+    df = pd.DataFrame(data)
     df.columns = [str(c).strip() for c in df.columns]
-    # Ensure numeric columns are numeric
-    numeric_cols = df.columns.drop(['Material', 'Code'])
-    for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-    return df, ss.sheet1, ss
+    return df, sheet
 
 # --- 3. SESSION STATE ---
 if 'df' not in st.session_state:
-    st.session_state.df, _, _ = load_data()
+    try:
+        st.session_state.df, _ = load_data()
+    except Exception as e:
+        st.error(f"⚠️ Authentication Error: {e}")
+        st.stop()
 
-# --- 4. NAVIGATION ---
-st.sidebar.header("Control Panel")
+# --- 4. NAVIGATION & SIDEBAR ALERTS ---
+st.title("📦 Multi-Site Laminate Stock Management")
+
+st.sidebar.header("Location & Timing")
 site_options = ["CliffordRd", "KPark", "HarrisDrive"]
-selected_site = st.sidebar.selectbox("Active Update Site", site_options)
-months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
-selected_month = st.sidebar.selectbox("Active Month", months)
+selected_site = st.sidebar.selectbox("Select Site to Update", site_options)
 
+months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+selected_month = st.sidebar.selectbox("Select Month", months)
+
+# Define Low Stock Thresholds (Mixed Units)
 thresholds = {
-    "129 PBL": {"min": 5, "target": 15, "unit": "Pallets"},
-    "129 ABL White": {"min": 3, "target": 10, "unit": "Pallets"},
-    "113 ABL White": {"min": 7, "target": 20, "unit": "Pallets"},
-    "113 PBL": {"min": 5, "target": 15, "unit": "Pallets"},
-    "082 PBL": {"min": 5, "target": 15, "unit": "Pallets"},
-    "082 ABL White": {"min": 2, "target": 8, "unit": "Pallets"},
-    "082 ABL Silver": {"min": 0.5, "target": 1, "unit": "Pallet"},
-    "129 ABL Silver": {"min": 0.5, "target": 1, "unit": "Pallet"},
-    "113 ABL Silver": {"min": 0.5, "target": 1, "unit": "Pallet"}
+    "129 PBL": {"val": 5, "unit": "Pallets"},
+    "129 ABL White": {"val": 3, "unit": "Pallets"},
+    "113 ABL White": {"val": 7, "unit": "Pallets"},
+    "113 PBL": {"val": 5, "unit": "Pallets"},
+    "082 PBL": {"val": 5, "unit": "Pallets"},
+    "082 ABL White": {"val": 2, "unit": "Pallets"},
+    "082 ABL Silver": {"val": 20, "unit": "Rolls"},
+    "129 ABL Silver": {"val": 20, "unit": "Rolls"},
+    "113 ABL Silver": {"val": 20, "unit": "Rolls"},
+    "JUMBO ROLLS PBL": {"val": 3, "unit": "Pallets"},
+    "JUMBO ROLLS ABL White": {"val": 2, "unit": "Pallets"},
+    "JUMBO ROLLS Silver": {"val": 1, "unit": "Pallets"}
 }
 
-tab_update, tab_summary, tab_reorder, tab_trends = st.tabs([
-    "📝 Update Stock", "📊 Projections", "🛒 Reorder Report", "📈 Trends"
-])
+# --- 5. DATA PROCESSING FOR SUMMARY ---
+summary_list = []
+low_stock_alerts = []
 
-# --- 5. UPDATE LOGIC ---
-with tab_update:
-    roll_col = f"{selected_site}_Rolls {selected_month}"
-    pal_col = f"{selected_site}_Pallets {selected_month}"
-    sq_col = f"{selected_site}_SquareM {selected_month}"
-    
-    display_cols = ["Material", "Code", roll_col, pal_col, sq_col]
-    
-    col_config = {
-        roll_col: st.column_config.NumberColumn(f"Rolls ({selected_month})", step=0.5, format="%.1f"),
-        pal_col: st.column_config.NumberColumn(f"Pallets ({selected_month})", step=0.5, format="%.1f"),
-        sq_col: st.column_config.NumberColumn("SquareM (Auto)", disabled=True, format="%.2f")
+for index, row in st.session_state.df.iterrows():
+    mat_name = str(row["Material"]).strip()
+    mat_sum = {
+        "Material": mat_name, 
+        "Code": row["Code"],
+        "Meters_per_Roll": row.get("Meters_per_Roll", 0),
+        "Rolls_on_Pallet": row.get("Rolls_on_Pallet", 0),
+        "m_Square_per_pallet": row.get("m_Square_per_pallet", 0)
     }
+    
+    for metric in ["Rolls", "Pallets", "SquareM"]:
+        total = 0
+        for site in site_options:
+            cur_month = "Feb" if (selected_month == "February" and site == "KPark" and metric == "SquareM") else selected_month
+            col_name = f"{site}_{metric} {cur_month}"
+            val = row.get(col_name, 0)
+            try:
+                total += float(str(val).replace(',', '').strip()) if str(val).strip() != "" else 0
+            except: pass
+        mat_sum[f"Gross {metric}"] = total
+    
+    if mat_name in thresholds:
+        t_info = thresholds[mat_name]
+        current_val = mat_sum[f"Gross {t_info['unit']}"]
+        if current_val < t_info['val']:
+            low_stock_alerts.append(f"**{mat_name}**: {current_val} {t_info['unit']} (Min: {t_info['val']})")
+            
+    summary_list.append(mat_sum)
 
-    edited_df = st.data_editor(st.session_state.df[display_cols], use_container_width=True, hide_index=True, column_config=col_config)
+summary_df = pd.DataFrame(summary_list)
 
-    if st.button("💾 Save All Changes"):
-        with st.spinner("Syncing..."):
-            _, sheet, ss = load_data()
+if low_stock_alerts:
+    st.sidebar.warning("⚠️ **Low Stock Alerts**")
+    for alert in low_stock_alerts:
+        st.sidebar.write(f"- {alert}")
+else:
+    st.sidebar.success("✅ All stock levels healthy")
+
+if st.sidebar.button("🔄 Sync with Google Sheets"):
+    with st.spinner("Fetching latest data..."):
+        st.session_state.df, _ = load_data()
+        st.success("Data synchronized!")
+        st.rerun()
+
+# --- 6. DATA EDITOR ---
+st.subheader(f"Update Physical Stock: {selected_site} ({selected_month})")
+
+roll_col = f"{selected_site}_Rolls {selected_month}"
+pallet_col = f"{selected_site}_Pallets {selected_month}"
+square_col = f"{selected_site}_SquareM {selected_month}"
+
+available_cols = [c for c in [roll_col, pallet_col, square_col] if c in st.session_state.df.columns]
+display_cols = ["Material", "Laminate", "Code"] + available_cols
+
+col_config = {
+    "Material": st.column_config.TextColumn(label="Material", pinned=True, width="medium"),
+    "Laminate": st.column_config.TextColumn(label="Laminate", disabled=True, width="small"),
+    "Code": st.column_config.TextColumn(label="Code", disabled=True, width="small"),
+}
+
+for col in available_cols:
+    clean_label = col.split("_")[1].split(" ")[0]
+    is_disabled = "SquareM" in col 
+    # MODIFIED: Added step=0.5 to allow half rolls/pallets
+    col_config[col] = st.column_config.NumberColumn(
+        label=clean_label, width="medium", disabled=is_disabled, step=0.5, format="%.1f"
+    )
+
+edited_df = st.data_editor(
+    st.session_state.df[display_cols],
+    use_container_width=False,
+    width=1200,
+    hide_index=True,
+    column_config=col_config,
+    key="data_editor_key"
+)
+
+# --- 7. SAVE & CALCULATION ---
+if st.button("💾 Save Counts & Update Total Area"):
+    try:
+        with st.spinner("Updating spreadsheet..."):
+            client = get_gspread_client()
+            sheet = client.open_by_key(SPREADSHEET_ID).sheet1
             updates = []
-            for idx, row in edited_df.iterrows():
-                r_p = float(st.session_state.df.at[idx, "Rolls_on_Pallet"] or 1.0)
-                m_p = float(st.session_state.df.at[idx, "m_Square_per_pallet"] or 0.0)
-                nr, np_val = float(row[roll_col]), float(row[pal_col])
-                n_sq = round((np_val * m_p) + (nr * (m_p / r_p)), 2)
+            
+            for index, row in edited_df.iterrows():
+                rolls_on_pal = pd.to_numeric(st.session_state.df.at[index, "Rolls_on_Pallet"], errors='coerce') or 1
+                m2_per_pallet = pd.to_numeric(st.session_state.df.at[index, "m_Square_per_pallet"], errors='coerce') or 0
                 
-                updates.append({'range': gspread.utils.rowcol_to_a1(idx+2, st.session_state.df.columns.get_loc(roll_col)+1), 'values': [[nr]]})
-                updates.append({'range': gspread.utils.rowcol_to_a1(idx+2, st.session_state.df.columns.get_loc(pal_col)+1), 'values': [[np_val]]})
-                updates.append({'range': gspread.utils.rowcol_to_a1(idx+2, st.session_state.df.columns.get_loc(sq_col)+1), 'values': [[n_sq]]})
+                new_rolls = row[roll_col]
+                new_pallets = row[pallet_col]
+                
+                st.session_state.df.at[index, roll_col] = new_rolls
+                st.session_state.df.at[index, pallet_col] = new_pallets
+                
+                roll_idx = st.session_state.df.columns.get_loc(roll_col) + 1
+                pal_idx = st.session_state.df.columns.get_loc(pallet_col) + 1
+                updates.append({'range': gspread.utils.rowcol_to_a1(index + 2, roll_idx), 'values': [[new_rolls]]})
+                updates.append({'range': gspread.utils.rowcol_to_a1(index + 2, pal_idx), 'values': [[new_pallets]]})
+                
+                if square_col in st.session_state.df.columns:
+                    m2_from_pallets = new_pallets * m2_per_pallet
+                    m2_from_rolls = new_rolls * (m2_per_pallet / rolls_on_pal)
+                    calc_total_m2 = round(m2_from_pallets + m2_from_rolls, 2)
+                    
+                    st.session_state.df.at[index, square_col] = calc_total_m2
+                    sqm_idx = st.session_state.df.columns.get_loc(square_col) + 1
+                    updates.append({'range': gspread.utils.rowcol_to_a1(index + 2, sqm_idx), 'values': [[calc_total_m2]]})
             
             sheet.batch_update(updates)
-            st.session_state.df, _, _ = load_data()
-            st.success("Stock updated.")
+            st.success("✅ Updates saved with corrected area calculation!")
             st.rerun()
+    except Exception as e:
+        st.error(f"❌ Error: {e}")
 
-# --- 6. REORDER REPORT ---
-with tab_reorder:
-    st.subheader("📋 Required Reorder Quantities")
-    reorder_list = []
-    for _, row in st.session_state.df.iterrows():
-        name = row["Material"]
-        if name in thresholds:
-            unit = thresholds[name]['unit']
-            current_gross = sum([float(row.get(f"{s}_{unit} {selected_month}", 0)) for s in site_options])
-            if current_gross < thresholds[name]['min']:
-                needed = thresholds[name]['target'] - current_gross
-                reorder_list.append({"Material": name, "Current Total": round(current_gross, 1), "Target": thresholds[name]['target'], "ORDER QUANTITY": f"{round(needed, 1)} {unit}"})
-    if reorder_list: st.table(pd.DataFrame(reorder_list))
-    else: st.success("All stock levels healthy.")
+# --- 8. GROSS SUMMARY TABLE ---
+st.divider()
+st.subheader(f"📊 Gross Stock Summary - {selected_month}")
 
-# --- 7. TRENDS (FIXED) ---
-with tab_trends:
-    st.subheader("📈 Historical Trends")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        trend_mat = st.selectbox("Select Material", st.session_state.df["Material"].unique(), key="trend_mat")
-    with col2:
-        trend_metric = st.selectbox("Select Metric", ["Pallets", "Rolls", "SquareM"], key="trend_metric")
-    
-    view_type = st.radio("View Mode", ["Gross (All Sites)", "Site Comparison"], horizontal=True)
-    
-    # Extract data for plotting
-    plot_data = []
-    mat_row = st.session_state.df[st.session_state.df["Material"] == trend_mat].iloc[0]
-    
-    for m in months:
-        if view_type == "Gross (All Sites)":
-            gross_val = sum([float(mat_row.get(f"{s}_{trend_metric} {m}", 0)) for s in site_options])
-            plot_data.append({"Month": m, "Value": gross_val, "Site": "Gross"})
-        else:
-            for s in site_options:
-                val = float(mat_row.get(f"{s}_{trend_metric} {m}", 0))
-                plot_data.append({"Month": m, "Value": val, "Site": s})
-    
-    trend_df = pd.DataFrame(plot_data)
-    
-    # Ensure months are ordered correctly on X-axis
-    trend_df["Month"] = pd.Categorical(trend_df["Month"], categories=months, ordered=True)
-    trend_df = trend_df.sort_values("Month")
+final_cols = [
+    "Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet",
+    "Gross Rolls", "Gross Pallets", "Gross SquareM"
+]
 
-    fig = px.line(
-        trend_df, 
-        x="Month", 
-        y="Value", 
-        color="Site", 
-        title=f"{trend_mat} {trend_metric} Trend",
-        markers=True,
-        line_shape="linear"
-    )
-    st.plotly_chart(fig, use_container_width=True)
+def highlight_low_stock(row):
+    material = str(row["Material"]).strip()
+    if material in thresholds:
+        t_info = thresholds[material]
+        current_val = row[f"Gross {t_info['unit']}"]
+        if current_val < t_info['val']:
+            return ['background-color: #ff4b4b; color: white'] * len(row)
+    return [''] * len(row)
 
-# --- 8. PROJECTIONS ---
-with tab_summary:
-    st.info("Historical data is now being pulled for projections. Burn rate is based on month-over-month change.")
+styled_df = summary_df[final_cols].style.apply(highlight_low_stock, axis=1)
+
+st.dataframe(
+    styled_df, 
+    use_container_width=True, 
+    hide_index=True,
+    column_config={
+        "Meters_per_Roll": st.column_config.NumberColumn(label="Mtrs/Roll"),
+        "Rolls_on_Pallet": st.column_config.NumberColumn(label="Rolls/Pallet"),
+        "m_Square_per_pallet": st.column_config.NumberColumn(label="m2/Pallet"),
+        "Gross Rolls": st.column_config.NumberColumn(label="Gross Rolls", format="%.1f"),
+        "Gross SquareM": st.column_config.NumberColumn(label="Total Gross m2", format="%.2f")
+    }
+)
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("Total Gross Rolls", f"{summary_df['Gross Rolls'].sum():,.1f}")
+with col2:
+    st.metric("Total Gross Pallets", f"{summary_df['Gross Pallets'].sum():,.2f}")
+with col3:
+    st.metric("Total Gross Area (m2)", f"{summary_df['Gross SquareM'].sum():,.2f}")
+
+# --- 9. TRENDS ---
+st.divider()
+st.subheader(f"📈 Trends ({selected_site})")
+unique_materials = st.session_state.df['Material'].unique()
+selected_mat = st.selectbox("Select Material", unique_materials)
+selected_metric = st.radio("Metric", ["Rolls", "Pallets", "SquareM"], horizontal=True)
+
+mat_data = st.session_state.df[st.session_state.df['Material'] == selected_mat].iloc[0]
+trend_values = []
+for m in months:
+    cur_m = "Feb" if (m == "February" and selected_site == "KPark" and selected_metric == "SquareM") else m
+    col_name = f"{selected_site}_{selected_metric} {cur_m}"
+    val = mat_data.get(col_name, 0)
+    try:
+        trend_values.append(float(str(val).replace(',', '').strip()) if str(val).strip() != "" else 0)
+    except: trend_values.append(0)
+
+st.plotly_chart(px.line(pd.DataFrame({'Month': months, 'Value': trend_values}), x='Month', y='Value', markers=True), use_container_width=True)
