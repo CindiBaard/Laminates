@@ -52,7 +52,6 @@ months = ["January", "February", "March", "April", "May", "June", "July", "Augus
 selected_month = st.sidebar.selectbox("Select Month", months)
 
 # Define Low Stock Thresholds (Mixed Units)
-# Note: Silver variants are now roll-based (20 rolls), others remain pallet-based
 thresholds = {
     "129 PBL": {"val": 5, "unit": "Pallets"},
     "129 ABL White": {"val": 3, "unit": "Pallets"},
@@ -60,9 +59,9 @@ thresholds = {
     "113 PBL": {"val": 5, "unit": "Pallets"},
     "082 PBL": {"val": 5, "unit": "Pallets"},
     "082 ABL White": {"val": 2, "unit": "Pallets"},
-    "082 ABL Silver": {"val": 20, "unit": "Rolls"},   # Updated to Rolls
-    "129 ABL Silver": {"val": 20, "unit": "Rolls"},   # Updated to Rolls
-    "113 ABL Silver": {"val": 20, "unit": "Rolls"},   # Updated to Rolls
+    "082 ABL Silver": {"val": 20, "unit": "Rolls"},
+    "129 ABL Silver": {"val": 20, "unit": "Rolls"},
+    "113 ABL Silver": {"val": 20, "unit": "Rolls"},
     "JUMBO ROLLS PBL": {"val": 3, "unit": "Pallets"},
     "JUMBO ROLLS ABL White": {"val": 2, "unit": "Pallets"},
     "JUMBO ROLLS Silver": {"val": 1, "unit": "Pallets"}
@@ -93,7 +92,6 @@ for index, row in st.session_state.df.iterrows():
             except: pass
         mat_sum[f"Gross {metric}"] = total
     
-    # Check for Low Stock for Sidebar Alerts
     if mat_name in thresholds:
         t_info = thresholds[mat_name]
         current_val = mat_sum[f"Gross {t_info['unit']}"]
@@ -104,7 +102,6 @@ for index, row in st.session_state.df.iterrows():
 
 summary_df = pd.DataFrame(summary_list)
 
-# Render Sidebar Alerts
 if low_stock_alerts:
     st.sidebar.warning("⚠️ **Low Stock Alerts**")
     for alert in low_stock_alerts:
@@ -137,8 +134,9 @@ col_config = {
 for col in available_cols:
     clean_label = col.split("_")[1].split(" ")[0]
     is_disabled = "SquareM" in col 
+    # MODIFIED: Added step=0.5 to allow half rolls/pallets
     col_config[col] = st.column_config.NumberColumn(
-        label=clean_label, width="medium", disabled=is_disabled
+        label=clean_label, width="medium", disabled=is_disabled, step=0.5, format="%.1f"
     )
 
 edited_df = st.data_editor(
@@ -216,14 +214,14 @@ st.dataframe(
         "Meters_per_Roll": st.column_config.NumberColumn(label="Mtrs/Roll"),
         "Rolls_on_Pallet": st.column_config.NumberColumn(label="Rolls/Pallet"),
         "m_Square_per_pallet": st.column_config.NumberColumn(label="m2/Pallet"),
+        "Gross Rolls": st.column_config.NumberColumn(label="Gross Rolls", format="%.1f"),
         "Gross SquareM": st.column_config.NumberColumn(label="Total Gross m2", format="%.2f")
     }
 )
 
-# Totals Metrics
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.metric("Total Gross Rolls", f"{summary_df['Gross Rolls'].sum():,.0f}")
+    st.metric("Total Gross Rolls", f"{summary_df['Gross Rolls'].sum():,.1f}")
 with col2:
     st.metric("Total Gross Pallets", f"{summary_df['Gross Pallets'].sum():,.2f}")
 with col3:
