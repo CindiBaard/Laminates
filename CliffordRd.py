@@ -226,23 +226,33 @@ st.dataframe(summary_df.style.apply(highlight_low_stock, axis=1), use_container_
 
 # --- 10. MONTHLY TREND CHART ---
 st.divider()
-st.subheader("📈 Total Square Meter Trend (All Sites)")
+st.subheader("📈 Monthly Stock Trends by Code")
 
-# Extract columns that represent SquareM and have a month name
-trend_cols = [c for c in st.session_state.df.columns if "SquareM" in c]
 trend_data = []
+# Identify all SquareM columns across all months
+sqm_cols = [c for c in st.session_state.df.columns if "SquareM" in c]
 
 for m in months:
-    month_cols = [c for c in trend_cols if m in c]
-    if month_cols:
-        # Sum all sites for this specific month
-        monthly_total = st.session_state.df[month_cols].apply(pd.to_numeric, errors='coerce').fillna(0).values.sum()
-        trend_data.append({"Month": m, "Total m²": monthly_total})
+    # Filter columns for this specific month
+    month_sqm_cols = [c for c in sqm_cols if m in c]
+    if month_sqm_cols:
+        for idx, row in st.session_state.df.iterrows():
+            code = row["Code"]
+            # Total m2 for this code across all sites for this month
+            total_m2 = pd.to_numeric(row[month_sqm_cols], errors='coerce').fillna(0).sum()
+            trend_data.append({"Month": m, "Code": code, "Total m²": total_m2})
 
 if trend_data:
     trend_df = pd.DataFrame(trend_data)
-    fig = px.line(trend_df, x="Month", y="Total m²", markers=True, 
-                 title="Stock Level Trend (Total m² across all locations)")
+    fig = px.line(
+        trend_df, 
+        x="Month", 
+        y="Total m²", 
+        color="Code", 
+        markers=True,
+        category_orders={"Month": months},
+        title="Stock Level History (m²) per Material Code"
+    )
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("No historical data available to plot trend.")
+    st.info("No data available to plot trends.")
