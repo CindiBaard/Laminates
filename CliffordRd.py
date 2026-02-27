@@ -78,7 +78,7 @@ square_col = f"{selected_site}_SquareM {selected_month}"
 
 available_cols = [c for c in [roll_col, pallet_col, square_col] if c in st.session_state.df.columns]
 
-# UNHIDDEN COLUMNS ADDED HERE
+# UNHIDDEN COLUMNS
 display_cols = ["Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet"] + available_cols
 
 col_config = {
@@ -223,3 +223,26 @@ def highlight_low_stock(row):
     return [''] * len(row)
 
 st.dataframe(summary_df.style.apply(highlight_low_stock, axis=1), use_container_width=True, hide_index=True)
+
+# --- 10. MONTHLY TREND CHART ---
+st.divider()
+st.subheader("📈 Total Square Meter Trend (All Sites)")
+
+# Extract columns that represent SquareM and have a month name
+trend_cols = [c for c in st.session_state.df.columns if "SquareM" in c]
+trend_data = []
+
+for m in months:
+    month_cols = [c for c in trend_cols if m in c]
+    if month_cols:
+        # Sum all sites for this specific month
+        monthly_total = st.session_state.df[month_cols].apply(pd.to_numeric, errors='coerce').fillna(0).values.sum()
+        trend_data.append({"Month": m, "Total m²": monthly_total})
+
+if trend_data:
+    trend_df = pd.DataFrame(trend_data)
+    fig = px.line(trend_df, x="Month", y="Total m²", markers=True, 
+                 title="Stock Level Trend (Total m² across all locations)")
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("No historical data available to plot trend.")
