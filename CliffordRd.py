@@ -77,11 +77,16 @@ pallet_col = f"{selected_site}_Pallets {selected_month}"
 square_col = f"{selected_site}_SquareM {selected_month}"
 
 available_cols = [c for c in [roll_col, pallet_col, square_col] if c in st.session_state.df.columns]
-display_cols = ["Material", "Code"] + available_cols
+
+# UNHIDDEN COLUMNS ADDED HERE
+display_cols = ["Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet"] + available_cols
 
 col_config = {
     "Material": st.column_config.TextColumn(label="Material", pinned=True),
     "Code": st.column_config.TextColumn(label="Code", disabled=True),
+    "Meters_per_Roll": st.column_config.NumberColumn(label="m/Roll", disabled=True),
+    "Rolls_on_Pallet": st.column_config.NumberColumn(label="Rolls/Pallet", disabled=True),
+    "m_Square_per_pallet": st.column_config.NumberColumn(label="m²/Pallet", disabled=True),
 }
 for col in available_cols:
     col_config[col] = st.column_config.NumberColumn(step=0.5, format="%.1f", disabled=("SquareM" in col))
