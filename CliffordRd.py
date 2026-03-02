@@ -127,7 +127,6 @@ for index, row in st.session_state.df.iterrows():
             item_weight = 0.0
             order_sqm = 0.0
             m2_per_p = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0
-            m_per_r = pd.to_numeric(row["Meters_per_Roll"], errors='coerce') or 0
             r_on_p = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1
 
             if t_info['unit'] == "Pallets":
@@ -136,7 +135,6 @@ for index, row in st.session_state.df.iterrows():
                 order_sqm = gap * m2_per_p
             else:
                 item_weight = gap * WEIGHT_FACTORS["Roll_Avg_KG"]
-                # For rolls, sqm = gap * (m2_per_pallet / rolls_per_pallet)
                 order_sqm = gap * (m2_per_p / r_on_p)
             
             total_est_weight_kg += item_weight
@@ -195,7 +193,6 @@ if reorder_needed:
     with col_b:
         st.subheader("🚛 Freight Planning (20ft Load)")
         
-        # Capacity Calculations
         weight_cap = min(total_est_weight_kg / CONTAINER_LIMIT_KG, 1.0)
         pallet_cap = min(total_pallets_to_order / CONTAINER_LIMIT_PALLETS, 1.0)
         
@@ -212,12 +209,16 @@ if reorder_needed:
         else:
             st.info("🟢 Capacity available.")
 
-    csv = reorder_df.to_csv(index=False).encode('utf-8')
+    # --- Excel Export Logic ---
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        reorder_df.to_excel(writer, index=False, sheet_name='Reorder List')
+    
     st.download_button(
-        label="📥 Download Reorder List (CSV)",
-        data=csv,
-        file_name=f"Reorder_Report_{selected_month}.csv",
-        mime="text/csv",
+        label="📥 Download Reorder List (Excel)",
+        data=buffer.getvalue(),
+        file_name=f"Reorder_Report_{selected_month}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
 # --- 9. GROSS SUMMARY TABLE ---
@@ -238,16 +239,13 @@ st.divider()
 st.subheader("📈 Monthly Stock Trends by Code")
 
 trend_data = []
-# Identify all SquareM columns across all months
 sqm_cols = [c for c in st.session_state.df.columns if "SquareM" in c]
 
 for m in months:
-    # Filter columns for this specific month
     month_sqm_cols = [c for c in sqm_cols if m in c]
     if month_sqm_cols:
         for idx, row in st.session_state.df.iterrows():
             code = row["Code"]
-            # Total m2 for this code across all sites for this month
             total_m2 = pd.to_numeric(row[month_sqm_cols], errors='coerce').fillna(0).sum()
             trend_data.append({"Month": m, "Code": code, "Total m²": total_m2})
 
