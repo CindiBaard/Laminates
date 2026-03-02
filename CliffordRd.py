@@ -125,11 +125,19 @@ for index, row in st.session_state.df.iterrows():
             gap = max(0.0, float(t_info['target']) - float(current_val))
             
             item_weight = 0.0
+            order_sqm = 0.0
+            m2_per_p = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0
+            m_per_r = pd.to_numeric(row["Meters_per_Roll"], errors='coerce') or 0
+            r_on_p = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1
+
             if t_info['unit'] == "Pallets":
                 item_weight = gap * WEIGHT_FACTORS["Pallet_Avg_KG"]
                 total_pallets_to_order += gap
+                order_sqm = gap * m2_per_p
             else:
                 item_weight = gap * WEIGHT_FACTORS["Roll_Avg_KG"]
+                # For rolls, sqm = gap * (m2_per_pallet / rolls_per_pallet)
+                order_sqm = gap * (m2_per_p / r_on_p)
             
             total_est_weight_kg += item_weight
 
@@ -138,6 +146,7 @@ for index, row in st.session_state.df.iterrows():
                 "Current": current_val,
                 "Target": t_info['target'],
                 "Order Qty": f"{gap:.1f} {t_info['unit']}",
+                "Order m²": round(order_sqm, 2),
                 "Est. Weight (KG)": round(item_weight, 1)
             })
     summary_list.append(mat_sum)
