@@ -263,3 +263,75 @@ if trend_data:
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("No data available to plot trends.")
+
+# ... (Keep all your existing code from sections 1 through 10) ...
+
+# --- 11. FINAL PROCUREMENT OVERRIDE SECTION ---
+st.divider()
+st.subheader("📝 Final Procurement Confirmation")
+st.info("The quantities below are suggested based on your stock levels. If Procurement ordered different amounts, please update the 'Final Actual Order' column for your records.")
+
+# Prepare a dataframe for the procurement override
+# We only want to show items that actually appeared in the reorder list
+if not reorder_df.empty:
+    # Initialize the Final Order column in session state if it doesn't exist
+    if 'final_procurement_data' not in st.session_state:
+        # Create a base dataframe for overrides
+        st.session_state.final_procurement_data = reorder_df[['Material', 'Code', 'Order Qty', 'Order m²']].copy()
+        # Add the editable column
+        st.session_state.final_procurement_data['Final Actual Order (Qty)'] = 0.0
+        st.session_state.final_procurement_data['Notes/Reason for Change'] = ""
+
+    # Create the editor
+    procurement_editor = st.data_editor(
+        st.session_state.final_procurement_data,
+        column_config={
+            "Material": st.column_config.TextColumn(disabled=True),
+            "Code": st.column_config.TextColumn(disabled=True),
+            "Order Qty": st.column_config.TextColumn("Suggested Qty", disabled=True),
+            "Order m²": st.column_config.NumberColumn("Suggested m²", disabled=True),
+            "Final Actual Order (Qty)": st.column_config.NumberColumn(
+                "Final Actual Order",
+                help="The exact quantity procurement actually purchased",
+                min_value=0.0,
+                step=0.1,
+                required=True
+            ),
+            "Notes/Reason for Change": st.column_config.TextColumn(
+                "Notes",
+                help="e.g., Supplier out of stock, budget constraints, etc."
+            )
+        },
+        hide_index=True,
+        use_container_width=True,
+        key="procurement_override_editor"
+    )
+
+    col_save_1, col_save_2 = st.columns([1, 4])
+    
+    with col_save_1:
+        if st.button("✅ Confirm Final Order"):
+            st.session_state.final_procurement_data = procurement_editor
+            st.success("Final order quantities stored for this session!")
+    
+    with col_save_2:
+        # Export logic for the ACTUAL order
+        final_buffer = io.BytesIO()
+        with pd.ExcelWriter(final_buffer, engine='openpyxl') as writer:
+            procurement_editor.to_excel(writer, index=False, sheet_name='Final Procurement Order')
+        
+        st.download_button(
+            label="📥 Download FINAL Procurement List",
+            data=final_buffer.getvalue(),
+            file_name=f"FINAL_Order_{selected_month}_{selected_site}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+else:
+    st.write("No reorders currently required. Final procurement override is disabled.")
+
+# Optional: Add a metric to the sidebar for the final confirmed total
+if 'final_procurement_data' in st.session_state:
+    total_confirmed = st.session_state.final_procurement_data['Final Actual Order (Qty)'].sum()
+    st.sidebar.metric("Confirmed Order Total", f"{total_confirmed:.1f} Units")
+
+    
