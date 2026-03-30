@@ -141,6 +141,7 @@ for index, row in st.session_state.df.iterrows():
 
             reorder_needed.append({
                 "Material": mat_name,
+                "Code": row["Code"],  # <--- MAKE SURE THIS LINE IS HERE
                 "Current": current_val,
                 "Target": t_info['target'],
                 "Order Qty": f"{gap:.1f} {t_info['unit']}",
