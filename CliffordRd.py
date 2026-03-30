@@ -269,29 +269,29 @@ else:
 # --- 11. FINAL PROCUREMENT OVERRIDE SECTION ---
 st.divider()
 st.subheader("📝 Final Procurement Confirmation")
-st.info("The quantities below are suggested based on your stock levels. If Procurement ordered different amounts, please update the 'Final Actual Order' column.")
+st.info("Update the 'Final Actual Order' column if Procurement purchased different amounts than suggested.")
 
-# Check if there are actually items that need reordering
 if reorder_needed:
-    # Convert the list of dicts to a clean DataFrame for the editor
-    # We use only the essential columns to avoid KeyError
+    # 1. Create a clean DataFrame from the list of dictionaries
     current_reorder_df = pd.DataFrame(reorder_needed)
     
-    # Standardize columns to ensure they exist before indexing
-    required_cols = ["Material", "Code", "Order Qty", "Order m²"]
+    # 2. Logic to handle the session state for the override table
+    # We use a key that includes the site and month to ensure data resets if the user switches sites
+    state_key = f"procurement_data_{selected_site}_{selected_month}"
     
-    # Initialize or Update session state
-    # We check if the Material list has changed to reset the override table if needed
-    if 'final_procurement_data' not in st.session_state:
-        # Create the initial override table
-        override_df = current_reorder_df[required_cols].copy()
+    if state_key not in st.session_state:
+        # We only take columns that actually exist in the dataframe to avoid KeyError
+        cols_to_keep = [c for c in ["Material", "Code", "Order Qty", "Order m²"] if c in current_reorder_df.columns]
+        override_df = current_reorder_df[cols_to_keep].copy()
+        
+        # Add the editable columns
         override_df['Final Actual Order (Qty)'] = 0.0
-        override_df['Notes/Reason for Change'] = ""
-        st.session_state.final_procurement_data = override_df
+        override_df['Notes'] = ""
+        st.session_state[state_key] = override_df
 
-    # Create the editor using the session state
+    # 3. Display the Data Editor
     procurement_editor = st.data_editor(
-        st.session_state.final_procurement_data,
+        st.session_state[state_key],
         column_config={
             "Material": st.column_config.TextColumn(disabled=True),
             "Code": st.column_config.TextColumn(disabled=True),
@@ -299,49 +299,51 @@ if reorder_needed:
             "Order m²": st.column_config.NumberColumn("Suggested m²", disabled=True, format="%.2f"),
             "Final Actual Order (Qty)": st.column_config.NumberColumn(
                 "Final Actual Order",
-                help="The exact quantity procurement actually purchased",
+                help="Enter the quantity actually ordered",
                 min_value=0.0,
                 step=0.1,
             ),
-            "Notes/Reason for Change": st.column_config.TextColumn(
-                "Notes",
-                help="e.g., Supplier out of stock, budget constraints, etc."
-            )
+            "Notes": st.column_config.TextColumn("Notes/Reason for Change")
         },
         hide_index=True,
         use_container_width=True,
-        key="procurement_override_editor"
+        key=f"editor_{state_key}" # Unique key for the widget
     )
 
-    col_save_1, col_save_2, col_save_3 = st.columns([1, 1, 3])
+    # 4. Save and Export Buttons
+    col_save, col_reset, col_export = st.columns([1, 1, 3])
     
-    with col_save_1:
+    with col_save:
         if st.button("✅ Confirm Order"):
-            st.session_state.final_procurement_data = procurement_editor
-            st.success("Order Saved!")
+            st.session_state[state_key] = procurement_editor
+            st.success("Order quantities saved!")
             
-    with col_save_2:
-        if st.button("🔄 Reset Form"):
-            if 'final_procurement_data' in st.session_state:
-                del st.session_state.final_procurement_data
+    with col_reset:
+        if st.button("🔄 Clear Form"):
+            if state_key in st.session_state:
+                del st.session_state[state_key]
             st.rerun()
     
-    with col_save_3:
-        # Export logic
+    with col_export:
         final_buffer = io.BytesIO()
         with pd.ExcelWriter(final_buffer, engine='openpyxl') as writer:
-            procurement_editor.to_excel(writer, index=False, sheet_name='Final Order')
+            # We filter out rows where the final order is 0 for a cleaner export
+            export_df = procurement_editor[procurement_editor['Final Actual Order (Qty)'] > 0]
+            if export_df.empty: export_df = procurement_editor # Export all if none selected
+            export_df.to_excel(writer, index=False, sheet_name='Final Order')
         
         st.download_button(
             label="📥 Download FINAL Procurement List (Excel)",
             data=final_buffer.getvalue(),
-            file_name=f"FINAL_Procurement_{selected_month}.xlsx",
+            file_name=f"FINAL_Order_{selected_site}_{selected_month}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 else:
-    st.write("🟢 No reorders currently required. Final procurement section is empty.")
+    st.write("🟢 No reorders currently required for this selection.")
 
-# --- SIDEBAR UPDATE ---
-if 'final_procurement_data' in st.session_state:
-    actual_sum = st.session_state.final_procurement_data['Final Actual Order (Qty)'].sum()
+# --- SIDEBAR METRIC ---
+# Pull the confirmed total from the specific site/month key
+state_key = f"procurement_data_{selected_site}_{selected_month}"
+if state_key in st.session_state:
+    actual_sum = st.session_state[state_key]['Final Actual Order (Qty)'].sum()
     st.sidebar.metric("Confirmed Order Total", f"{actual_sum:.1f}")
