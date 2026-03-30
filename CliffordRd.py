@@ -276,38 +276,39 @@ if reorder_needed:
     current_reorder_df = pd.DataFrame(reorder_needed)
     
     # 2. Logic to handle the session state for the override table
-    # We use a key that includes the site and month to ensure data resets if the user switches sites
     state_key = f"procurement_data_{selected_site}_{selected_month}"
     
     if state_key not in st.session_state:
-        # We only take columns that actually exist in the dataframe to avoid KeyError
+        # We take only the necessary columns from the reorder list
         cols_to_keep = [c for c in ["Material", "Code", "Order Qty", "Order m²"] if c in current_reorder_df.columns]
         override_df = current_reorder_df[cols_to_keep].copy()
         
-        # Add the editable columns
+        # Add the editable columns for procurement input
         override_df['Final Actual Order (Qty)'] = 0.0
         override_df['Notes'] = ""
         st.session_state[state_key] = override_df
 
-    # 3. Display the Data Editor
+    # 3. Display the Data Editor with specific column order
     procurement_editor = st.data_editor(
         st.session_state[state_key],
         column_config={
-            "Material": st.column_config.TextColumn(disabled=True),
-            "Code": st.column_config.TextColumn(disabled=True),
+            "Material": st.column_config.TextColumn("Material", disabled=True, pinned=True),
+            "Code": st.column_config.TextColumn("Laminate Code", disabled=True),
             "Order Qty": st.column_config.TextColumn("Suggested Qty", disabled=True),
             "Order m²": st.column_config.NumberColumn("Suggested m²", disabled=True, format="%.2f"),
             "Final Actual Order (Qty)": st.column_config.NumberColumn(
                 "Final Actual Order",
-                help="Enter the quantity actually ordered",
+                help="Enter the quantity actually ordered by Procurement",
                 min_value=0.0,
                 step=0.1,
             ),
             "Notes": st.column_config.TextColumn("Notes/Reason for Change")
         },
+        # THIS LINE ENSURES CODE IS NEXT TO MATERIAL
+        column_order=["Material", "Code", "Order Qty", "Order m²", "Final Actual Order (Qty)", "Notes"],
         hide_index=True,
         use_container_width=True,
-        key=f"editor_{state_key}" # Unique key for the widget
+        key=f"editor_{state_key}" 
     )
 
     # 4. Save and Export Buttons
@@ -327,9 +328,10 @@ if reorder_needed:
     with col_export:
         final_buffer = io.BytesIO()
         with pd.ExcelWriter(final_buffer, engine='openpyxl') as writer:
-            # We filter out rows where the final order is 0 for a cleaner export
+            # Filter rows where an order was actually placed
             export_df = procurement_editor[procurement_editor['Final Actual Order (Qty)'] > 0]
-            if export_df.empty: export_df = procurement_editor # Export all if none selected
+            if export_df.empty: 
+                export_df = procurement_editor 
             export_df.to_excel(writer, index=False, sheet_name='Final Order')
         
         st.download_button(
@@ -342,7 +344,6 @@ else:
     st.write("🟢 No reorders currently required for this selection.")
 
 # --- SIDEBAR METRIC ---
-# Pull the confirmed total from the specific site/month key
 state_key = f"procurement_data_{selected_site}_{selected_month}"
 if state_key in st.session_state:
     actual_sum = st.session_state[state_key]['Final Actual Order (Qty)'].sum()
