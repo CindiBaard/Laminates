@@ -43,7 +43,13 @@ if 'df' not in st.session_state:
 
 # --- 4. SIDEBAR NAVIGATION ---
 st.sidebar.header("Navigation")
-app_mode = st.sidebar.radio("Select Mode", ["📦 Stock Management", "📈 Stock Trends", "🚛 Receive Goods (KPark)"])
+# Update your navigation line to this:
+app_mode = st.sidebar.radio("Select Mode", [
+    "📦 Stock Management", 
+    "📋 View Pending Orders",  # <--- Added this
+    "📈 Stock Trends", 
+    "🚛 Receive Goods (KPark)"
+])
 
 site_options = ["CliffordRd", "KPark", "HarrisDrive"]
 selected_site = st.sidebar.selectbox("Select Site", site_options)
@@ -257,3 +263,59 @@ elif app_mode == "🚛 Receive Goods (KPark)":
             st.write("No pending orders currently in the system.")
     except Exception as e:
         st.error(f"Error accessing 'Pending_Orders' tab: {e}")
+
+# --- MODE 4: PENDING ORDER DASHBOARD ---
+elif app_mode == "📋 View Pending Orders":
+    st.title("📋 Current Pending Orders")
+    st.info("This list shows all orders saved to the 'Pending_Orders' tab that have not yet been received.")
+
+    client = get_gspread_client()
+    try:
+        pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
+        pending_data = pending_sheet.get_all_records()
+        
+        if pending_data:
+            df_pending = pd.DataFrame(pending_data)
+            
+            # --- CALCULATE TOTALS ---
+            total_items = len(df_pending)
+            # Ensure the column is numeric for calculation
+            df_pending['Final_Actual_Order'] = pd.to_numeric(df_pending['Final_Actual_Order'], errors='coerce').fillna(0)
+            total_qty = df_pending['Final_Actual_Order'].sum()
+
+            # Display KPI Metrics
+            m1, m2 = st.columns(2)
+            m1.metric("Pending Line Items", total_items)
+            m2.metric("Total Outstanding Qty", f"{total_qty:,.1f}")
+
+            st.divider()
+
+            # --- DISPLAY THE TABLE ---
+            st.dataframe(
+                df_pending,
+                column_config={
+                    "Material": st.column_config.TextColumn("Material Name", width="medium"),
+                    "Code": st.column_config.TextColumn("Laminate Code"),
+                    "Order_Qty": st.column_config.TextColumn("Original Suggestion"),
+                    "Order_m2": st.column_config.NumberColumn("Total m²", format="%.2f"),
+                    "Final_Actual_Order": st.column_config.NumberColumn("Quantity Ordered", format="%.1f"),
+                    "Notes": st.column_config.TextColumn("Procurement Notes", width="large")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+
+            # --- EXPORT OPTION ---
+            csv = df_pending.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Export Pending List to CSV",
+                data=csv,
+                file_name=f"Pending_Orders_{datetime.now().strftime('%Y-%m-%d')}.csv",
+                mime='text/csv',
+            )
+
+        else:
+            st.success("✨ No pending orders! All materials have been received.")
+            
+    except Exception as e:
+        st.error(f"Could not find the 'Pending_Orders' tab. Please ensure it exists in your Google Sheet. Error: {e}")
