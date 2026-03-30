@@ -270,32 +270,28 @@ else:
 # --- 11. FINAL PROCUREMENT OVERRIDE SECTION ---
 st.divider()
 st.subheader("📝 Final Procurement Confirmation")
-st.info("Update the 'Final Actual Order' column if Procurement purchased different amounts than suggested.")
+st.markdown("Manually enter the final quantities ordered and provide a reason for any changes.")
 
 if reorder_needed:
-    # 1. Create a clean DataFrame from the current reorder list
+    # 1. Create a clean DataFrame from the list of dictionaries
     current_reorder_df = pd.DataFrame(reorder_needed)
     
-    # 2. Logic to handle the session state for the override table
-    state_key = f"procurement_data_{selected_site}_{selected_month}"
+    # 2. Use a fresh state key to force the Code column to appear
+    state_key = f"proc_v4_{selected_site}_{selected_month}"
     
-    # CHECK: If key exists but is missing 'Code', we force a reset
-    if state_key in st.session_state:
-        if "Code" not in st.session_state[state_key].columns:
-            del st.session_state[state_key]
-
     if state_key not in st.session_state:
-        # Explicitly pull Material and Code from the reorder list
-        cols_to_keep = [c for c in ["Material", "Code", "Order Qty", "Order m²"] if c in current_reorder_df.columns]
-        override_df = current_reorder_df[cols_to_keep].copy()
+        # Define the exact columns we want to bring over
+        desired_cols = ["Material", "Code", "Order Qty", "Order m²"]
+        existing_cols = [c for c in desired_cols if c in current_reorder_df.columns]
         
-        # Add editable columns
+        override_df = current_reorder_df[existing_cols].copy()
+        
+        # Add the manual entry columns (initialized as empty/zero)
         override_df['Final Actual Order (Qty)'] = 0.0
-        override_df['Notes'] = ""
+        override_df['Notes/Reason for Change'] = ""
         st.session_state[state_key] = override_df
 
     # 3. Display the Data Editor
-    # We use column_order to force "Code" to be the second column
     procurement_editor = st.data_editor(
         st.session_state[state_key],
         column_config={
@@ -305,28 +301,32 @@ if reorder_needed:
             "Order m²": st.column_config.NumberColumn("Suggested m²", disabled=True, format="%.2f"),
             "Final Actual Order (Qty)": st.column_config.NumberColumn(
                 "Final Actual Order",
-                help="Enter the quantity actually ordered by Procurement",
+                help="Type the manual amount here",
                 min_value=0.0,
                 step=0.1,
             ),
-            "Notes": st.column_config.TextColumn("Notes/Reason for Change")
+            "Notes/Reason for Change": st.column_config.TextColumn(
+                "Notes/Reason for Change",
+                help="Explain why procurement changed the quantity"
+            )
         },
-        column_order=["Material", "Code", "Order Qty", "Order m²", "Final Actual Order (Qty)", "Notes"],
+        # This order puts Code exactly where you want it
+        column_order=["Material", "Code", "Order Qty", "Order m²", "Final Actual Order (Qty)", "Notes/Reason for Change"],
         hide_index=True,
         use_container_width=True,
         key=f"editor_{state_key}" 
     )
 
-    # 4. Buttons (Save, Reset, Export)
+    # 4. Action Buttons
     col_save, col_reset, col_export = st.columns([1, 1, 3])
     
     with col_save:
-        if st.button("✅ Confirm Order", key="save_final"):
+        if st.button("✅ Save Manual Changes"):
             st.session_state[state_key] = procurement_editor
-            st.success("Order quantities saved!")
+            st.success("Manual quantities and notes saved successfully!")
             
     with col_reset:
-        if st.button("🔄 Clear Form", key="reset_final"):
+        if st.button("🔄 Reset Table"):
             if state_key in st.session_state:
                 del st.session_state[state_key]
             st.rerun()
@@ -334,16 +334,14 @@ if reorder_needed:
     with col_export:
         final_buffer = io.BytesIO()
         with pd.ExcelWriter(final_buffer, engine='openpyxl') as writer:
-            export_df = procurement_editor[procurement_editor['Final Actual Order (Qty)'] > 0]
-            if export_df.empty: 
-                export_df = procurement_editor 
-            export_df.to_excel(writer, index=False, sheet_name='Final Order')
+            # We export the full table so the 'Suggested' vs 'Actual' is clear in the Excel
+            procurement_editor.to_excel(writer, index=False, sheet_name='Final Order Report')
         
         st.download_button(
-            label="📥 Download FINAL Procurement List (Excel)",
+            label="📥 Download FINAL Procurement Excel",
             data=final_buffer.getvalue(),
-            file_name=f"FINAL_Order_{selected_site}_{selected_month}.xlsx",
+            file_name=f"FINAL_Procurement_Order_{selected_month}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 else:
-    st.write("🟢 No reorders currently required for this selection.")
+    st.info("🟢 Everything is in stock. No manual override needed.")
