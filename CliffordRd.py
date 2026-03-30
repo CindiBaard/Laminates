@@ -17,7 +17,6 @@ API_SCOPES = [
 
 WEIGHT_FACTORS = {"Pallet_Avg_KG": 850.0, "Roll_Avg_KG": 25.0}
 CONTAINER_LIMIT_KG = 18000.0
-CONTAINER_LIMIT_PALLETS = 10.0
 
 # --- 2. AUTHENTICATION ---
 def get_gspread_client():
@@ -44,7 +43,7 @@ if 'df' not in st.session_state:
 
 # --- 4. SIDEBAR NAVIGATION ---
 st.sidebar.header("Navigation")
-app_mode = st.sidebar.radio("Select Mode", ["📦 Stock Management", "🚛 Receive Goods (KPark)"])
+app_mode = st.sidebar.radio("Select Mode", ["📦 Stock Management", "📈 Stock Trends", "🚛 Receive Goods (KPark)"])
 
 site_options = ["CliffordRd", "KPark", "HarrisDrive"]
 selected_site = st.sidebar.selectbox("Select Site", site_options)
@@ -68,7 +67,7 @@ thresholds = {
 
 # --- MODE 1: STOCK MANAGEMENT ---
 if app_mode == "📦 Stock Management":
-    st.title("📦 Multi-Site Laminate Stock Management")
+    st.title(f"📦 {selected_site} - {selected_month} Management")
     
     roll_col = f"{selected_site}_Rolls {selected_month}"
     pallet_col = f"{selected_site}_Pallets {selected_month}"
@@ -89,15 +88,16 @@ if app_mode == "📦 Stock Management":
 
     edited_df = st.data_editor(st.session_state.df[display_cols], use_container_width=True, hide_index=True, column_config=col_config)
 
-    # REORDER LOGIC
+    # REORDER & ALERT LOGIC
     summary_list, low_stock_alerts, reorder_needed = [], [], []
-    total_est_weight_kg, total_pallets_to_order = 0.0, 0.0
+    total_est_weight_kg = 0.0
 
     for index, row in st.session_state.df.iterrows():
         mat_name = str(row["Material"]).strip()
         mat_sum = {"Material": mat_name, "Code": row["Code"]}
         edited_row = edited_df.iloc[index]
         
+        # Calculate Gross across all sites
         for metric in ["Rolls", "Pallets", "SquareM"]:
             total = 0
             for site in site_options:
@@ -107,18 +107,18 @@ if app_mode == "📦 Stock Management":
                 except: pass
             mat_sum[f"Gross {metric}"] = total
         
+        # Threshold Checks
         if mat_name in thresholds:
             t = thresholds[mat_name]
             cur = mat_sum[f"Gross {t['unit']}"]
             if cur < t['val']:
-                low_stock_alerts.append(f"**{mat_name}**: {cur} {t['unit']} (Min: {t['val']})")
+                low_stock_alerts.append(f"🚨 **{mat_name}**: {cur} {t['unit']} (Min: {t['val']})")
                 gap = max(0.0, float(t['target']) - float(cur))
                 m2p = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0
                 rp = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1
                 
                 weight = gap * (WEIGHT_FACTORS["Pallet_Avg_KG"] if t['unit']=="Pallets" else WEIGHT_FACTORS["Roll_Avg_KG"])
                 total_est_weight_kg += weight
-                if t['unit']=="Pallets": total_pallets_to_order += gap
                 
                 reorder_needed.append({
                     "Material": mat_name, "Code": row["Code"],
@@ -127,24 +127,32 @@ if app_mode == "📦 Stock Management":
                 })
         summary_list.append(mat_sum)
 
-    # Save button for stock counts
-    if st.button("💾 Save Counts"):
-        client = get_gspread_client()
-        sheet = client.open_by_key(SPREADSHEET_ID).sheet1
-        updates = []
-        for idx, row in edited_df.iterrows():
-            r_p = pd.to_numeric(st.session_state.df.at[idx, "Rolls_on_Pallet"], errors='coerce') or 1
-            m_p = pd.to_numeric(st.session_state.df.at[idx, "m_Square_per_pallet"], errors='coerce') or 0
-            m2 = round((row[pallet_col] * m_p) + (row[roll_col] * (m_p / r_p)), 2)
-            for c, v in [(roll_col, row[roll_col]), (pallet_col, row[pallet_col]), (square_col, m2)]:
-                if c in st.session_state.df.columns:
-                    col_idx = st.session_state.df.columns.get_loc(c) + 1
-                    updates.append({'range': gspread.utils.rowcol_to_a1(idx+2, col_idx), 'values': [[v]]})
-        sheet.batch_update(updates)
-        st.session_state.df, _ = load_data()
-        st.success("Saved!"); st.rerun()
+    # Top Metrics
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Order Weight", f"{total_est_weight_kg:,.0f} KG")
+    c2.metric("Container Capacity", f"{(total_est_weight_kg/CONTAINER_LIMIT_KG)*100:.1f}%")
+    with c3:
+        if st.button("💾 Save Counts to Sheet"):
+            client = get_gspread_client()
+            sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+            updates = []
+            for idx, row in edited_df.iterrows():
+                r_p = pd.to_numeric(st.session_state.df.at[idx, "Rolls_on_Pallet"], errors='coerce') or 1
+                m_p = pd.to_numeric(st.session_state.df.at[idx, "m_Square_per_pallet"], errors='coerce') or 0
+                m2 = round((row[pallet_col] * m_p) + (row[roll_col] * (m_p / r_p)), 2)
+                for c, v in [(roll_col, row[roll_col]), (pallet_col, row[pallet_col]), (square_col, m2)]:
+                    if c in st.session_state.df.columns:
+                        col_idx = st.session_state.df.columns.get_loc(c) + 1
+                        updates.append({'range': gspread.utils.rowcol_to_a1(idx+2, col_idx), 'values': [[v]]})
+            sheet.batch_update(updates)
+            st.session_state.df, _ = load_data()
+            st.success("Stock Updated!"); st.rerun()
 
-    # --- FINAL PROCUREMENT OVERRIDE ---
+    if low_stock_alerts:
+        with st.expander("🚩 View Low Stock Flags", expanded=True):
+            for alert in low_stock_alerts: st.write(alert)
+
+    # --- PROCUREMENT OVERRIDE ---
     st.divider()
     st.subheader("📝 Final Procurement Confirmation")
     if reorder_needed:
@@ -162,28 +170,51 @@ if app_mode == "📦 Stock Management":
                 "Code": st.column_config.TextColumn(disabled=True),
                 "Order Qty": st.column_config.TextColumn("Suggested", disabled=True),
                 "Order m²": st.column_config.NumberColumn("Sug. m²", disabled=True),
+                "Final Actual Order (Qty)": st.column_config.NumberColumn("Actual Order", min_value=0.0),
+                "Notes/Reason for Change": st.column_config.TextColumn("Reason for Change")
             },
             hide_index=True, use_container_width=True, key=f"edit_{state_key}"
         )
 
         if st.button("✅ Save Final Order to Pending List"):
             client = get_gspread_client()
-            # This saves to a new tab called 'Pending_Orders'
             try:
                 pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
                 valid_orders = proc_editor[proc_editor['Final Actual Order (Qty)'] > 0].values.tolist()
                 if valid_orders:
                     pending_sheet.append_rows(valid_orders)
-                    st.success("Order added to Pending List! You can receive these in 'Receive Goods' mode.")
+                    st.success("Order added to Pending List! Ready for receiving mode.")
                 else:
-                    st.warning("No quantities entered.")
+                    st.warning("Please enter at least one quantity.")
             except:
-                st.error("Error: Please ensure a tab named 'Pending_Orders' exists in your Google Sheet.")
+                st.error("Error: Ensure a tab named 'Pending_Orders' exists.")
 
-# --- MODE 2: RECEIVE GOODS ---
+# --- MODE 2: TRENDS ---
+elif app_mode == "📈 Stock Trends":
+    st.title("📈 Stock Level Trends (Gross)")
+    
+    # Calculate Gross for all months for a specific material
+    target_mat = st.selectbox("Select Material to Track", st.session_state.df["Material"].unique())
+    trend_data = []
+    
+    row = st.session_state.df[st.session_state.df["Material"] == target_mat].iloc[0]
+    for m in months:
+        gross_pallets = 0
+        for site in site_options:
+            col = f"{site}_Pallets {m}"
+            if col in st.session_state.df.columns:
+                try: gross_pallets += float(row[col])
+                except: pass
+        trend_data.append({"Month": m, "Pallets": gross_pallets})
+    
+    df_trend = pd.DataFrame(trend_data)
+    fig = px.line(df_trend, x="Month", y="Pallets", title=f"Gross Pallet Stock Trend: {target_mat}", markers=True)
+    st.plotly_chart(fig, use_container_width=True)
+
+# --- MODE 3: RECEIVE GOODS ---
 elif app_mode == "🚛 Receive Goods (KPark)":
     st.title("🚛 Goods Receiving (KPark)")
-    st.info("Select items from the Pending List that have arrived at KPark.")
+    st.info("Check items that have arrived to automatically add them to KPark stock.")
     
     client = get_gspread_client()
     try:
@@ -196,35 +227,33 @@ elif app_mode == "🚛 Receive Goods (KPark)":
             
             receive_editor = st.data_editor(
                 pending_df,
-                column_config={"Received?": st.column_config.CheckboxColumn("Arrived?")},
+                column_config={"Received?": st.column_config.CheckboxColumn("Confirm Arrived")},
                 hide_index=True, use_container_width=True
             )
             
-            if st.button("🚛 Confirm Arrival & Update KPark Stock"):
+            if st.button("🚛 Confirm Arrival & Update KPark Inventory"):
                 received = receive_editor[receive_editor["Received?"] == True]
                 if not received.empty:
                     main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
-                    # Find KPark Column
                     k_col_name = f"KPark_Pallets {selected_month}"
                     k_col_idx = st.session_state.df.columns.get_loc(k_col_name) + 1
                     
                     for _, row in received.iterrows():
-                        # Find row in main sheet by Code
                         cell = main_sheet.find(str(row["Code"]))
                         current_val = float(main_sheet.cell(cell.row, k_col_idx).value or 0)
+                        # Add the "Final Actual Order" amount to current stock
                         new_val = current_val + float(row["Final_Actual_Order"])
                         main_sheet.update_cell(cell.row, k_col_idx, new_val)
                     
-                    # Remove received items from Pending list
-                    # (Simple logic: clear the pending sheet and write back non-received)
+                    # Cleanup Pending list
                     remaining = receive_editor[receive_editor["Received?"] == False].drop(columns=["Received?"])
                     pending_sheet.clear()
                     pending_sheet.append_row(["Material", "Code", "Order_Qty", "Order_m2", "Final_Actual_Order", "Notes"])
                     if not remaining.empty:
                         pending_sheet.append_rows(remaining.values.tolist())
                     
-                    st.success("Inventory Updated! KPark stock increased."); st.rerun()
+                    st.success("KPark stock updated successfully!"); st.rerun()
         else:
-            st.write("No pending orders to receive.")
+            st.write("No pending orders currently in the system.")
     except Exception as e:
-        st.error(f"Make sure you have a 'Pending_Orders' tab. Error: {e}")
+        st.error(f"Error accessing 'Pending_Orders' tab: {e}")
