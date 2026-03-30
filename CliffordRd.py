@@ -267,7 +267,7 @@ elif app_mode == "🚛 Receive Goods (KPark)":
 # --- MODE 4: PENDING ORDER DASHBOARD ---
 elif app_mode == "📋 View Pending Orders":
     st.title("📋 Current Pending Orders")
-    st.info("This list shows all orders saved to the 'Pending_Orders' tab that have not yet been received.")
+    st.info("View, export, or remove outstanding orders from the system.")
 
     client = get_gspread_client()
     try:
@@ -277,45 +277,61 @@ elif app_mode == "📋 View Pending Orders":
         if pending_data:
             df_pending = pd.DataFrame(pending_data)
             
-            # --- CALCULATE TOTALS ---
-            total_items = len(df_pending)
-            # Ensure the column is numeric for calculation
+            # --- KPI METRICS ---
             df_pending['Final_Actual_Order'] = pd.to_numeric(df_pending['Final_Actual_Order'], errors='coerce').fillna(0)
-            total_qty = df_pending['Final_Actual_Order'].sum()
-
-            # Display KPI Metrics
             m1, m2 = st.columns(2)
-            m1.metric("Pending Line Items", total_items)
-            m2.metric("Total Outstanding Qty", f"{total_qty:,.1f}")
+            m1.metric("Pending Line Items", len(df_pending))
+            m2.metric("Total Outstanding Qty", f"{df_pending['Final_Actual_Order'].sum():,.1f}")
 
             st.divider()
 
-            # --- DISPLAY THE TABLE ---
-            st.dataframe(
+            # --- EDITABLE TABLE FOR DELETION ---
+            # We add a temporary column for selection
+            df_pending["Select to Delete"] = False
+            
+            edited_pending = st.data_editor(
                 df_pending,
                 column_config={
-                    "Material": st.column_config.TextColumn("Material Name", width="medium"),
-                    "Code": st.column_config.TextColumn("Laminate Code"),
-                    "Order_Qty": st.column_config.TextColumn("Original Suggestion"),
-                    "Order_m2": st.column_config.NumberColumn("Total m²", format="%.2f"),
-                    "Final_Actual_Order": st.column_config.NumberColumn("Quantity Ordered", format="%.1f"),
-                    "Notes": st.column_config.TextColumn("Procurement Notes", width="large")
+                    "Select to Delete": st.column_config.CheckboxColumn("🗑️", help="Select rows to remove"),
+                    "Material": st.column_config.TextColumn("Material", disabled=True),
+                    "Code": st.column_config.TextColumn("Code", disabled=True),
+                    "Final_Actual_Order": st.column_config.NumberColumn("Qty Ordered", format="%.1f", disabled=True),
+                    "Notes": st.column_config.TextColumn("Notes", width="large", disabled=True)
                 },
                 hide_index=True,
-                use_container_width=True
+                use_container_width=True,
+                key="pending_manager_editor"
             )
 
-            # --- EXPORT OPTION ---
-            csv = df_pending.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Export Pending List to CSV",
-                data=csv,
-                file_name=f"Pending_Orders_{datetime.now().strftime('%Y-%m-%d')}.csv",
-                mime='text/csv',
-            )
+            # --- ACTIONS: DELETE & EXPORT ---
+            col_del, col_exp = st.columns([1, 4])
+            
+            with col_del:
+                if st.button("🗑️ Delete Selected", type="secondary"):
+                    # Keep only rows that WERE NOT selected for deletion
+                    to_keep = edited_pending[edited_pending["Select to Delete"] == False].drop(columns=["Select to Delete"])
+                    
+                    pending_sheet.clear()
+                    # Rewrite headers
+                    pending_sheet.append_row(["Material", "Code", "Order_Qty", "Order_m2", "Final_Actual_Order", "Notes"])
+                    
+                    if not to_keep.empty:
+                        pending_sheet.append_rows(to_keep.values.tolist())
+                    
+                    st.warning("Selected orders removed from the pending list.")
+                    st.rerun()
+
+            with col_exp:
+                csv = df_pending.drop(columns=["Select to Delete"]).to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Export Pending List (CSV)",
+                    data=csv,
+                    file_name=f"Pending_Orders_{datetime.now().strftime('%Y-%m-%d')}.csv",
+                    mime='text/csv',
+                )
 
         else:
-            st.success("✨ No pending orders! All materials have been received.")
+            st.success("✨ All orders have been cleared or received.")
             
     except Exception as e:
-        st.error(f"Could not find the 'Pending_Orders' tab. Please ensure it exists in your Google Sheet. Error: {e}")
+        st.error(f"Error accessing 'Pending_Orders': {e}")
