@@ -41,6 +41,9 @@ if 'df' not in st.session_state:
     except Exception as e:
         st.error(f"⚠️ Auth Error: {e}"); st.stop()
 
+# ADD THIS LINE HERE:
+reorder_needed = []
+
 # --- 4. SIDEBAR NAVIGATION ---
 st.sidebar.header("Navigation")
 # Update your navigation line to this:
@@ -94,31 +97,78 @@ if app_mode == "📦 Stock Management":
 
     edited_df = st.data_editor(st.session_state.df[display_cols], use_container_width=True, hide_index=True, column_config=col_config)
 
-    # REORDER & ALERT LOGIC
-    # --- 10. MANUAL OVERRIDE (For Transport Issues/Buffer) ---
+    # 1. Initialize logic variables
+    reorder_needed = [] 
+    low_stock_alerts = []
+    total_est_weight_kg = 0.0
+
+    # 2. RUN THE CALCULATION LOOP (Restored and Corrected)
+    for index, row in st.session_state.df.iterrows():
+        mat_name = str(row["Material"]).strip()
+        edited_row = edited_df.iloc[index]
+        
+        # Calculate Current Gross across all sites
+        gross_val = 0
+        if mat_name in thresholds:
+            t = thresholds[mat_name]
+            unit = t['unit']
+            
+            # Sum up the specific unit (Pallets or Rolls) across all sites
+            for site in site_options:
+                c_name = f"{site}_{unit} {selected_month}"
+                val = edited_row[c_name] if site == selected_site and c_name in edited_row else row.get(c_name, 0)
+                try: gross_val += float(val)
+                except: pass
+            
+            # Check against threshold
+            if gross_val < t['val']:
+                low_stock_alerts.append(f"🚨 **{mat_name}**: {gross_val} {unit} (Min: {t['val']})")
+                gap = max(0.0, float(t['target']) - float(gross_val))
+                
+                m2p = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0
+                rp = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1
+                
+                weight = gap * (WEIGHT_FACTORS["Pallet_Avg_KG"] if unit=="Pallets" else WEIGHT_FACTORS["Roll_Avg_KG"])
+                total_est_weight_kg += weight
+                
+                reorder_needed.append({
+                    "Material": mat_name, 
+                    "Code": row["Code"],
+                    "Order Qty": f"{gap:.1f} {unit}",
+                    "Order m²": round(gap * (m2p if unit=="Pallets" else m2p/rp), 2)
+                })
+
+    # 3. Display Top Metrics
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Order Weight", f"{total_est_weight_kg:,.0f} KG")
+    c2.metric("Container Capacity", f"{(total_est_weight_kg/CONTAINER_LIMIT_KG)*100:.1f}%")
+    with c3:
+        if st.button("💾 Save Counts to Sheet"):
+            # ... (Your existing Save Counts logic) ...
+            st.success("Stock Updated!"); st.rerun()
+
+    if low_stock_alerts:
+        with st.expander("🚩 View Low Stock Flags", expanded=True):
+            for alert in low_stock_alerts: st.write(alert)
+
+    # --- 10. MANUAL OVERRIDE (Add non-low stock items) ---
     st.divider()
     st.subheader("📦 Additional/Manual Stock Order")
-
-    # 1. Setup Manual Input Row
-    # We use st.session_state.df because that is where your master list lives
-    c1, c2, c3 = st.columns([3, 1, 1])
-    with c1:
-        manual_item = st.selectbox("Search Stock Item", options=st.session_state.df['Material'].unique(), index=None)
-    with c2:
-        manual_qty = st.number_input("Qty", min_value=0.0, step=1.0)
-    with c3:
-        st.write(" ") # Spacer for alignment
+    
+    col_sel, col_q, col_btn = st.columns([3, 1, 1])
+    with col_sel:
+        manual_item = st.selectbox("Search Stock Item", options=st.session_state.df['Material'].unique(), index=None, key="manual_sel")
+    with col_q:
+        manual_qty = st.number_input("Qty", min_value=0.0, step=1.0, key="manual_qty")
+    with col_btn:
+        st.write(" ") 
         if st.button("➕ Add Item") and manual_item:
-            # Get Code for selected item from the main dataframe
             m_code = st.session_state.df.loc[st.session_state.df['Material'] == manual_item, 'Code'].values[0]
-            
             state_key = f"proc_vFinal_{selected_site}_{selected_month}"
             
             new_row = pd.DataFrame([{
-                "Material": manual_item,
-                "Code": m_code,
-                "Order Qty": "0.0 Manual",
-                "Order m²": 0.0,
+                "Material": manual_item, "Code": m_code,
+                "Order Qty": "0.0 Manual", "Order m²": 0.0,
                 "Final Actual Order (Qty)": manual_qty,
                 "Notes/Reason for Change": "Manual Order (Transport/Buffer)"
             }])
@@ -127,24 +177,19 @@ if app_mode == "📦 Stock Management":
                 st.session_state[state_key] = new_row
             else:
                 st.session_state[state_key] = pd.concat([st.session_state[state_key], new_row], ignore_index=True)
-            
             st.rerun()
 
     # --- 11. FINAL PROCUREMENT CONFIRMATION ---
     st.subheader("📝 Final Procurement Confirmation")
     state_key = f"proc_vFinal_{selected_site}_{selected_month}"
 
-    # Show editor if there is low stock OR if the user added manual items
     if reorder_needed or (state_key in st.session_state):
-        
-        # Initialize the table with low stock items if it doesn't exist yet
         if state_key not in st.session_state:
             df_over = pd.DataFrame(reorder_needed)
             df_over['Final Actual Order (Qty)'] = 0.0
             df_over['Notes/Reason for Change'] = ""
             st.session_state[state_key] = df_over
 
-        # One single Data Editor
         proc_editor = st.data_editor(
             st.session_state[state_key],
             column_config={
@@ -155,24 +200,17 @@ if app_mode == "📦 Stock Management":
                 "Final Actual Order (Qty)": st.column_config.NumberColumn("Actual Order", min_value=0.0),
                 "Notes/Reason for Change": st.column_config.TextColumn("Reason for Change")
             },
-            hide_index=True, 
-            use_container_width=True, 
-            key=f"edit_{state_key}"
+            hide_index=True, use_container_width=True, key=f"editor_{state_key}"
         )
 
         if st.button("✅ Save Final Order to Pending List"):
-            client = get_gspread_client()
             try:
-                # Update session state with editor changes before saving
-                st.session_state[state_key] = proc_editor
-                
+                client = get_gspread_client()
                 pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
-                # Filter for rows where a quantity was actually entered
-                valid_orders = proc_editor[proc_editor['Final Actual Order (Qty)'] > 0].values.tolist()
-                
-                if valid_orders:
-                    pending_sheet.append_rows(valid_orders)
-                    # Clear the form after successful save
+                # Pre-process data: ensure it's in the correct column order for your Sheet
+                valid_orders = proc_editor[proc_editor['Final Actual Order (Qty)'] > 0]
+                if not valid_orders.empty:
+                    pending_sheet.append_rows(valid_orders.values.tolist())
                     del st.session_state[state_key]
                     st.success("Order added to Pending List!")
                     st.rerun()
