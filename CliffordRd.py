@@ -151,7 +151,7 @@ if app_mode == "📦 Stock Management":
         with st.expander("🚩 View Low Stock Flags", expanded=True):
             for alert in low_stock_alerts: st.write(alert)
 
-    # --- 10. MANUAL OVERRIDE (Add non-low stock items) ---
+# --- 10. MANUAL OVERRIDE (Add non-low stock items) ---
     st.divider()
     st.subheader("📦 Additional/Manual Stock Order")
     
@@ -159,25 +159,41 @@ if app_mode == "📦 Stock Management":
     with col_sel:
         manual_item = st.selectbox("Search Stock Item", options=st.session_state.df['Material'].unique(), index=None, key="manual_sel")
     with col_q:
-        manual_qty = st.number_input("Qty", min_value=0.0, step=1.0, key="manual_qty")
+        # User enters quantity of Pallets here
+        manual_qty = st.number_input("Qty (Pallets)", min_value=0.0, step=1.0, key="manual_qty")
     with col_btn:
         st.write(" ") 
         if st.button("➕ Add Item") and manual_item:
-            m_code = st.session_state.df.loc[st.session_state.df['Material'] == manual_item, 'Code'].values[0]
+            # 1. Get the full row data for this material to find its specs
+            mat_data = st.session_state.df.loc[st.session_state.df['Material'] == manual_item].iloc[0]
+            
+            m_code = mat_data['Code']
+            
+            # 2. Calculate Square Meters
+            # We pull m_Square_per_pallet and ensure it's a number
+            m2_per_pallet = pd.to_numeric(mat_data["m_Square_per_pallet"], errors='coerce') or 0
+            calculated_m2 = round(manual_qty * m2_per_pallet, 2)
+            
             state_key = f"proc_vFinal_{selected_site}_{selected_month}"
             
+            # 3. Create the new row with the calculated m²
             new_row = pd.DataFrame([{
-                "Material": manual_item, "Code": m_code,
-                "Order Qty": "0.0 Manual", "Order m²": 0.0,
+                "Material": manual_item, 
+                "Code": m_code,
+                "Order Qty": f"{manual_qty} Pallets (Manual)", 
+                "Order m²": calculated_m2, # <--- Automatically inserted
                 "Final Actual Order (Qty)": manual_qty,
                 "Notes/Reason for Change": "Manual Order (Transport/Buffer)"
             }])
             
+            # 4. Update Session State
             if state_key not in st.session_state:
                 st.session_state[state_key] = new_row
             else:
                 st.session_state[state_key] = pd.concat([st.session_state[state_key], new_row], ignore_index=True)
+            
             st.rerun()
+What was changed:
 
     # --- 11. FINAL PROCUREMENT CONFIRMATION ---
     st.subheader("📝 Final Procurement Confirmation")
