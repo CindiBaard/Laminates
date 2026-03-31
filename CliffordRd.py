@@ -182,7 +182,7 @@ if app_mode == "📦 Stock Management":
                 "Code": m_code,
                 "Order Qty": f"{manual_qty} Pallets (Manual)", 
                 "Order m²": calculated_m2, # <--- Automatically inserted
-                "Final Actual Order (Qty)": manual_qty,
+                "Final Actual Order (Qty)": calculated_m2,
                 "Notes/Reason for Change": "Manual Order (Transport/Buffer)"
             }])
             
