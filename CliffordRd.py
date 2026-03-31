@@ -193,7 +193,6 @@ if app_mode == "📦 Stock Management":
                 st.session_state[state_key] = pd.concat([st.session_state[state_key], new_row], ignore_index=True)
             
             st.rerun()
-What was changed:
 
     # --- 11. FINAL PROCUREMENT CONFIRMATION ---
     st.subheader("📝 Final Procurement Confirmation")
