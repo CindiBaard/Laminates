@@ -133,42 +133,42 @@ if app_mode == "📦 Stock Management":
                 })
         summary_list.append(mat_sum)
 
-    # Top Metrics
+# --- TOP METRICS & SAVE LOGIC ---
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Order Weight", f"{total_est_weight_kg:,.0f} KG")
     c2.metric("Container Capacity", f"{(total_est_weight_kg/CONTAINER_LIMIT_KG)*100:.1f}%")
+    
     with c3:
         if st.button("💾 Save Counts to Sheet"):
-    client = get_gspread_client()
-    sheet = client.open_by_key(SPREADSHEET_ID).sheet1
-    updates = []
-    
-    for idx, row in edited_df.iterrows():
-        # Get matching row in the full dataframe
-        # We use .index[idx] to make sure we are hitting the right spreadsheet row
-        real_idx = st.session_state.df.index[idx] 
-        
-        r_p = pd.to_numeric(st.session_state.df.at[real_idx, "Rolls_on_Pallet"], errors='coerce') or 1
-        m_p = pd.to_numeric(st.session_state.df.at[real_idx, "m_Square_per_pallet"], errors='coerce') or 0
-        
-        # Calculate SquareM
-        m2 = round((row[pallet_col] * m_p) + (row[roll_col] * (m_p / r_p)), 2)
-        
-        for c, v in [(roll_col, row[roll_col]), (pallet_col, row[pallet_col]), (square_col, m2)]:
-            if c in st.session_state.df.columns:
-                col_idx = st.session_state.df.columns.get_loc(c) + 1
-                # idx + 2 (Header is row 1, Data starts row 2)
-                updates.append({
-                    'range': gspread.utils.rowcol_to_a1(real_idx + 2, col_idx), 
-                    'values': [[float(v)]] # Ensure it's a float
-                })
-    
-    if updates:
-        sheet.batch_update(updates)
-        st.cache_data.clear() # Clear any cached data
-        st.session_state.df, _ = load_data() # Reload
-        st.success("Stock Updated for April!")
-        st.rerun()
+            client = get_gspread_client()
+            sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+            updates = []
+            
+            for idx, row in edited_df.iterrows():
+                # Correctly identify the row in the session state
+                real_idx = st.session_state.df.index[idx] 
+                
+                r_p = pd.to_numeric(st.session_state.df.at[real_idx, "Rolls_on_Pallet"], errors='coerce') or 1
+                m_p = pd.to_numeric(st.session_state.df.at[real_idx, "m_Square_per_pallet"], errors='coerce') or 0
+                
+                # Calculate SquareM based on current edits
+                m2 = round((row[pallet_col] * m_p) + (row[roll_col] * (m_p / r_p)), 2)
+                
+                # Prepare the batch update for Google Sheets
+                for c, v in [(roll_col, row[roll_col]), (pallet_col, row[pallet_col]), (square_col, m2)]:
+                    if c in st.session_state.df.columns:
+                        col_idx = st.session_state.df.columns.get_loc(c) + 1
+                        updates.append({
+                            'range': gspread.utils.rowcol_to_a1(real_idx + 2, col_idx), 
+                            'values': [[float(v)]] 
+                        })
+            
+            if updates:
+                sheet.batch_update(updates)
+                st.cache_data.clear() # Clear cache to show new data
+                st.session_state.df, _ = load_data() # Reload from source
+                st.success(f"Stock Updated for {selected_month}!")
+                st.rerun()
 
     if low_stock_alerts:
         with st.expander("🚩 View Low Stock Flags", expanded=True):
