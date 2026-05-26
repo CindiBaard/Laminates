@@ -211,10 +211,67 @@ if app_mode == "📦 Stock Management":
             except:
                 st.error("Error: Ensure a tab named 'Pending_Orders' exists.")
 
-# --- MODE 2: TRENDS ---
+# --- MODE 2: TRENDS & MONTHLY BREAKDOWN ---
 elif app_mode == "📈 Stock Trends":
-    st.title("📈 Stock Level Trends (Gross)")
+    st.title("📈 Stock Level Analytics")
     
+    # --- SECTION A: NEW MONTHLY COMBINED BREAKDOWN ---
+    st.subheader(f"📊 Combined Warehouse Stock Breakdown ({selected_month})")
+    st.info("Displays total Pallets and Rolls aggregated from Clifford Rd, K-Park, and Harris Drive.")
+    
+    if st.button(f"🔄 Generate Combined Chart for {selected_month}"):
+        combined_data = []
+        
+        # Iterate over all rows (materials) in the spreadsheet
+        for _, row in st.session_state.df.iterrows():
+            mat_name = str(row["Material"]).strip()
+            
+            total_pallets = 0.0
+            total_rolls = 0.0
+            
+            # Loop through all 3 warehouses to sum the values for the selected month
+            for site in site_options:
+                pallet_col = f"{site}_Pallets {selected_month}"
+                roll_col = f"{site}_Rolls {selected_month}"
+                
+                # Extract and clean Pallets
+                if pallet_col in st.session_state.df.columns:
+                    try: 
+                        total_pallets += float(str(row[pallet_col]).replace(',', '').strip()) if str(row[pallet_col]).strip() != "" else 0
+                    except: pass
+                    
+                # Extract and clean Rolls
+                if roll_col in st.session_state.df.columns:
+                    try: 
+                        total_rolls += float(str(row[roll_col]).replace(',', '').strip()) if str(row[roll_col]).strip() != "" else 0
+                    except: pass
+            
+            # Append rows for visualization mapping
+            combined_data.append({"Material": mat_name, "Unit Type": "Pallets", "Quantity": total_pallets})
+            combined_data.append({"Material": mat_name, "Unit Type": "Rolls", "Quantity": total_rolls})
+            
+        df_combined = pd.DataFrame(combined_data)
+        
+        # Create a grouped/binned bar chart using Plotly Express
+        fig_combined = px.bar(
+            df_combined, 
+            x="Material", 
+            y="Quantity", 
+            color="Unit Type",
+            barmode="group",
+            title=f"Total Pallets & Rolls by Material Type across All Warehouses ({selected_month})",
+            labels={"Quantity": "Total Stock Count", "Material": "Material Width & Type"},
+            color_discrete_map={"Pallets": "#1f77b4", "Rolls": "#ff7f0e"} # Distinct custom colors
+        )
+        
+        # Formatting layout improvements
+        fig_combined.update_layout(xaxis_tickangle=-45, legend_title_text='Stock Unit')
+        st.plotly_chart(fig_combined, use_container_width=True)
+
+    st.divider()
+
+    # --- SECTION B: YOUR ORIGINAL LINE TREND ---
+    st.subheader("📈 Historical Material Trend")
     # Calculate Gross for all months for a specific material
     target_mat = st.selectbox("Select Material to Track", st.session_state.df["Material"].unique())
     trend_data = []
