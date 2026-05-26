@@ -358,8 +358,54 @@ elif app_mode == "📋 View Pending Orders":
 
             st.divider()
 
+            # --- NEW FEATURE: GENERATE VISUALIZATION BUTTON ---
+            st.subheader(f"📊 Pending Order Summary Graph ({selected_month})")
+            
+            if st.button(f"🔄 Generate Pending Graph for {selected_month}"):
+                graph_data = []
+                
+                # Group pending rows by Material to consolidate duplicate rows if any exist
+                grouped_pending = df_pending.groupby('Material', as_index=False)['Final_Actual_Order'].sum()
+                
+                for _, p_row in grouped_pending.iterrows():
+                    mat_name = str(p_row["Material"]).strip()
+                    total_qty = float(p_row["Final_Actual_Order"])
+                    
+                    # Look up threshold units to distinguish Pallets vs Rolls
+                    unit_type = "Pallets" # Default fallback
+                    if mat_name in thresholds:
+                        unit_type = thresholds[mat_name]["unit"]
+                    
+                    # Split into graph tracking values
+                    pallets_val = total_qty if unit_type == "Pallets" else 0.0
+                    rolls_val = total_qty if unit_type == "Rolls" else 0.0
+                    
+                    graph_data.append({"Material": mat_name, "Unit Type": "Pallets", "Quantity": pallets_val})
+                    graph_data.append({"Material": mat_name, "Unit Type": "Rolls", "Quantity": rolls_val})
+                
+                if graph_data:
+                    df_graph = pd.DataFrame(graph_data)
+                    
+                    # Generate Grouped Bar Chart via Plotly Express
+                    fig_pending = px.bar(
+                        df_graph,
+                        x="Material",
+                        y="Quantity",
+                        color="Unit Type",
+                        barmode="group",
+                        title=f"Total Pending Quantities Ordered for {selected_month} (All Warehouses Combined)",
+                        labels={"Quantity": "Pending Quantity", "Material": "Material Width & Type"},
+                        color_discrete_map={"Pallets": "#1f77b4", "Rolls": "#ff7f0e"}
+                    )
+                    
+                    fig_pending.update_layout(xaxis_tickangle=-45, legend_title_text='Unit Class')
+                    st.plotly_chart(fig_pending, use_container_width=True)
+                else:
+                    st.warning("No clear data matched for mapping.")
+            
+            st.divider()
+
             # --- EDITABLE TABLE FOR DELETION ---
-            # We add a temporary column for selection
             df_pending["Select to Delete"] = False
             
             edited_pending = st.data_editor(
@@ -381,11 +427,9 @@ elif app_mode == "📋 View Pending Orders":
             
             with col_del:
                 if st.button("🗑️ Delete Selected", type="secondary"):
-                    # Keep only rows that WERE NOT selected for deletion
                     to_keep = edited_pending[edited_pending["Select to Delete"] == False].drop(columns=["Select to Delete"])
                     
                     pending_sheet.clear()
-                    # Rewrite headers
                     pending_sheet.append_row(["Material", "Code", "Order_Qty", "Order_m2", "Final_Actual_Order", "Notes"])
                     
                     if not to_keep.empty:
