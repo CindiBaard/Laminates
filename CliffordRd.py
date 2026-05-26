@@ -215,44 +215,34 @@ if app_mode == "📦 Stock Management":
 elif app_mode == "📈 Stock Trends":
     st.title("📈 Stock Level Analytics")
     
-    # --- SECTION A: NEW MONTHLY COMBINED BREAKDOWN ---
+    # --- SECTION A: ORIGINAL MONTHLY COMBINED BREAKDOWN ---
     st.subheader(f"📊 Combined Warehouse Stock Breakdown ({selected_month})")
     st.info("Displays total Pallets and Rolls aggregated from Clifford Rd, K-Park, and Harris Drive.")
     
     if st.button(f"🔄 Generate Combined Chart for {selected_month}"):
         combined_data = []
-        
-        # Iterate over all rows (materials) in the spreadsheet
         for _, row in st.session_state.df.iterrows():
             mat_name = str(row["Material"]).strip()
-            
             total_pallets = 0.0
             total_rolls = 0.0
             
-            # Loop through all 3 warehouses to sum the values for the selected month
             for site in site_options:
                 pallet_col = f"{site}_Pallets {selected_month}"
                 roll_col = f"{site}_Rolls {selected_month}"
                 
-                # Extract and clean Pallets
                 if pallet_col in st.session_state.df.columns:
-                    try: 
-                        total_pallets += float(str(row[pallet_col]).replace(',', '').strip()) if str(row[pallet_col]).strip() != "" else 0
+                    try: total_pallets += float(str(row[pallet_col]).replace(',', '').strip()) if str(row[pallet_col]).strip() != "" else 0
                     except: pass
                     
-                # Extract and clean Rolls
                 if roll_col in st.session_state.df.columns:
-                    try: 
-                        total_rolls += float(str(row[roll_col]).replace(',', '').strip()) if str(row[roll_col]).strip() != "" else 0
+                    try: total_rolls += float(str(row[roll_col]).replace(',', '').strip()) if str(row[roll_col]).strip() != "" else 0
                     except: pass
             
-            # Append rows for visualization mapping
             combined_data.append({"Material": mat_name, "Unit Type": "Pallets", "Quantity": total_pallets})
             combined_data.append({"Material": mat_name, "Unit Type": "Rolls", "Quantity": total_rolls})
             
         df_combined = pd.DataFrame(combined_data)
         
-        # Create a grouped/binned bar chart using Plotly Express
         fig_combined = px.bar(
             df_combined, 
             x="Material", 
@@ -261,18 +251,82 @@ elif app_mode == "📈 Stock Trends":
             barmode="group",
             title=f"Total Pallets & Rolls by Material Type across All Warehouses ({selected_month})",
             labels={"Quantity": "Total Stock Count", "Material": "Material Width & Type"},
-            color_discrete_map={"Pallets": "#1f77b4", "Rolls": "#ff7f0e"} # Distinct custom colors
+            color_discrete_map={"Pallets": "#1f77b4", "Rolls": "#ff7f0e"}
         )
-        
-        # Formatting layout improvements
         fig_combined.update_layout(xaxis_tickangle=-45, legend_title_text='Stock Unit')
         st.plotly_chart(fig_combined, use_container_width=True)
 
+    # --- NEW FEATURE: STANDALONE PENDING ORDERS BAR CHART ---
     st.divider()
+    st.subheader(f"⏳ Standalone Pending Orders Chart ({selected_month})")
+    st.caption("Standalone analysis tool to extract and graph incoming quantities currently outstanding in the 'Pending_Orders' sheet.")
 
-    # --- SECTION B: YOUR ORIGINAL LINE TREND ---
+    if st.button(f"📊 Generate Standalone Pending Chart for {selected_month}"):
+        client = get_gspread_client()
+        try:
+            pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
+            pending_data = pending_sheet.get_all_records()
+            
+            if pending_data:
+                df_pending = pd.DataFrame(pending_data)
+                df_pending.columns = [str(c).strip() for c in df_pending.columns]
+                
+                # Dynamically evaluate the column naming structures
+                qty_col = "Final_Actual_Order" if "Final_Actual_Order" in df_pending.columns else "Final Actual Order (Qty)"
+                
+                if qty_col in df_pending.columns:
+                    df_pending[qty_col] = pd.to_numeric(df_pending[qty_col], errors='coerce').fillna(0)
+                    
+                    # Group matching material variants together
+                    grouped_pending = df_pending.groupby('Material', as_index=False)[qty_col].sum()
+                    
+                    pending_graph_data = []
+                    for _, p_row in grouped_pending.iterrows():
+                        mat_name = str(p_row["Material"]).strip()
+                        total_qty = float(p_row[qty_col])
+                        
+                        if total_qty <= 0:
+                            continue
+                        
+                        # Sort into unit rules matching your thresholds config
+                        unit_type = "Pallets"
+                        if mat_name in thresholds:
+                            unit_type = thresholds[mat_name]["unit"]
+                        
+                        pallets_val = total_qty if unit_type == "Pallets" else 0.0
+                        rolls_val = total_qty if unit_type == "Rolls" else 0.0
+                        
+                        pending_graph_data.append({"Material Width & Type": mat_name, "Unit Type": "Pallets", "Quantity": pallets_val})
+                        pending_graph_data.append({"Material Width & Type": mat_name, "Unit Type": "Rolls", "Quantity": rolls_val})
+                    
+                    if pending_graph_data:
+                        df_pending_graph = pd.DataFrame(pending_graph_data)
+                        
+                        # Separate independent Plotly graph object
+                        fig_standalone_pending = px.bar(
+                            df_pending_graph,
+                            x="Material Width & Type",
+                            y="Quantity",
+                            color="Unit Type",
+                            barmode="group",
+                            title=f"Pending Materials Outstanding: Combined Warehouses ({selected_month})",
+                            labels={"Quantity": "Pending Order Quantity", "Material Width & Type": "Material Type"},
+                            color_discrete_map={"Pallets": "#2ca02c", "Rolls": "#9467bd"} # Alternating unique colors
+                        )
+                        fig_standalone_pending.update_layout(xaxis_tickangle=-45, legend_title_text='Unit Class')
+                        st.plotly_chart(fig_standalone_pending, use_container_width=True)
+                    else:
+                        st.warning("No valid pending quantities greater than zero found.")
+                else:
+                    st.error(f"Could not identify actual order quantity columns in sheet. Found: {list(df_pending.columns)}")
+            else:
+                st.info("The 'Pending_Orders' sheet is currently empty. No pending materials to chart.")
+        except Exception as e:
+            st.error(f"Could not read 'Pending_Orders' tab: {e}")
+
+    # --- SECTION B: ORIGINAL LINE TREND ---
+    st.divider()
     st.subheader("📈 Historical Material Trend")
-    # Calculate Gross for all months for a specific material
     target_mat = st.selectbox("Select Material to Track", st.session_state.df["Material"].unique())
     trend_data = []
     
