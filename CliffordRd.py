@@ -43,10 +43,9 @@ if 'df' not in st.session_state:
 
 # --- 4. SIDEBAR NAVIGATION ---
 st.sidebar.header("Navigation")
-# Update your navigation line to this:
 app_mode = st.sidebar.radio("Select Mode", [
     "📦 Stock Management", 
-    "📋 View Pending Orders",  # <--- Added this
+    "📋 View Pending Orders",
     "📈 Stock Trends", 
     "🚛 Receive Goods (KPark)"
 ])
@@ -127,13 +126,16 @@ if app_mode == "📦 Stock Management":
                 total_est_weight_kg += weight
                 
                 reorder_needed.append({
-                    "Material": mat_name, "Code": row["Code"],
-                    "Order Qty": f"{gap:.1f} {t['unit']}",
-                    "Order m²": round(gap * (m2p if t['unit']=="Pallets" else m2p/rp), 2)
+                    "Material": mat_name, 
+                    "Code": row["Code"],
+                    "Suggested Order": f"{gap:.1f} {t['unit']}",
+                    "Sug_Qty": gap,
+                    "Unit_Type": t['unit'],
+                    "m2_Per_Pallet": m2p,
+                    "Rolls_on_Pallet": rp
                 })
         summary_list.append(mat_sum)
 
-# --- TOP METRICS & SAVE LOGIC ---
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Order Weight", f"{total_est_weight_kg:,.0f} KG")
     c2.metric("Container Capacity", f"{(total_est_weight_kg/CONTAINER_LIMIT_KG)*100:.1f}%")
@@ -145,16 +147,12 @@ if app_mode == "📦 Stock Management":
             updates = []
             
             for idx, row in edited_df.iterrows():
-                # Correctly identify the row in the session state
                 real_idx = st.session_state.df.index[idx] 
-                
                 r_p = pd.to_numeric(st.session_state.df.at[real_idx, "Rolls_on_Pallet"], errors='coerce') or 1
                 m_p = pd.to_numeric(st.session_state.df.at[real_idx, "m_Square_per_pallet"], errors='coerce') or 0
                 
-                # Calculate SquareM based on current edits
                 m2 = round((row[pallet_col] * m_p) + (row[roll_col] * (m_p / r_p)), 2)
                 
-                # Prepare the batch update for Google Sheets
                 for c, v in [(roll_col, row[roll_col]), (pallet_col, row[pallet_col]), (square_col, m2)]:
                     if c in st.session_state.df.columns:
                         col_idx = st.session_state.df.columns.get_loc(c) + 1
@@ -165,8 +163,8 @@ if app_mode == "📦 Stock Management":
             
             if updates:
                 sheet.batch_update(updates)
-                st.cache_data.clear() # Clear cache to show new data
-                st.session_state.df, _ = load_data() # Reload from source
+                st.cache_data.clear()
+                st.session_state.df, _ = load_data()
                 st.success(f"Stock Updated for {selected_month}!")
                 st.rerun()
 
@@ -181,7 +179,7 @@ if app_mode == "📦 Stock Management":
         state_key = f"proc_vFinal_{selected_site}_{selected_month}"
         if state_key not in st.session_state:
             df_over = pd.DataFrame(reorder_needed)
-            df_over['Final Actual Order (Qty)'] = 0.0
+            df_over['Final Actual Order (Count)'] = df_over['Sug_Qty']
             df_over['Notes/Reason for Change'] = ""
             st.session_state[state_key] = df_over
 
@@ -190,10 +188,13 @@ if app_mode == "📦 Stock Management":
             column_config={
                 "Material": st.column_config.TextColumn(disabled=True),
                 "Code": st.column_config.TextColumn(disabled=True),
-                "Order Qty": st.column_config.TextColumn("Suggested", disabled=True),
-                "Order m²": st.column_config.NumberColumn("Sug. m²", disabled=True),
-                "Final Actual Order (Qty)": st.column_config.NumberColumn("Actual Order", min_value=0.0),
-                "Notes/Reason for Change": st.column_config.TextColumn("Reason for Change")
+                "Suggested Order": st.column_config.TextColumn("System Suggestion", disabled=True),
+                "Final Actual Order (Count)": st.column_config.NumberColumn("Actual Order (Count)", min_value=0.0, step=0.5),
+                "Notes/Reason for Change": st.column_config.TextColumn("Reason for Change"),
+                "Sug_Qty": st.column_config.NumberColumn(disabled=True),
+                "Unit_Type": st.column_config.TextColumn(disabled=True),
+                "m2_Per_Pallet": st.column_config.NumberColumn(disabled=True),
+                "Rolls_on_Pallet": st.column_config.NumberColumn(disabled=True),
             },
             hide_index=True, use_container_width=True, key=f"edit_{state_key}"
         )
@@ -202,38 +203,52 @@ if app_mode == "📦 Stock Management":
             client = get_gspread_client()
             try:
                 pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
-                valid_orders = proc_editor[proc_editor['Final Actual Order (Qty)'] > 0].values.tolist()
-                if valid_orders:
-                    pending_sheet.append_rows(valid_orders)
-                    st.success("Order added to Pending List! Ready for receiving mode.")
+                
+                rows_to_append = []
+                for _, p_row in proc_editor.iterrows():
+                    act_qty = float(p_row['Final Actual Order (Count)'])
+                    if act_qty > 0:
+                        p_count = act_qty if p_row['Unit_Type'] == "Pallets" else 0.0
+                        r_count = act_qty if p_row['Unit_Type'] == "Rolls" else 0.0
+                        
+                        # Mathematical conversions for total meters/square capacity
+                        m2p = float(p_row['m2_Per_Pallet'])
+                        rop = float(p_row['Rolls_on_Pallet']) if float(p_row['Rolls_on_Pallet']) > 0 else 1
+                        calculated_m2 = round(p_count * m2p + r_count * (m2p / rop), 2)
+                        
+                        rows_to_append.append([
+                            p_row['Material'],
+                            p_row['Code'],
+                            p_count,
+                            r_count,
+                            calculated_m2,
+                            p_row['Notes/Reason for Change']
+                        ])
+                
+                if rows_to_append:
+                    pending_sheet.append_rows(rows_to_append)
+                    st.success("Order added to Pending List with detailed breakdown! Ready for receiving mode.")
                 else:
                     st.warning("Please enter at least one quantity.")
-            except:
-                st.error("Error: Ensure a tab named 'Pending_Orders' exists.")
+            except Exception as e:
+                st.error(f"Error: Ensure a tab named 'Pending_Orders' exists with columns: Material, Code, Pending_Pallets, Pending_Rolls, Pending_m2, Notes. Details: {e}")
 
 # --- MODE 2: TRENDS & MONTHLY BREAKDOWN ---
 elif app_mode == "📈 Stock Trends":
     st.title("📈 Stock Level Analytics")
     
-    # --- SECTION A: ORIGINAL MONTHLY COMBINED BREAKDOWN ---
     st.subheader(f"📊 Combined Warehouse Stock Breakdown ({selected_month})")
-    st.info("Displays total Pallets and Rolls aggregated from Clifford Rd, K-Park, and Harris Drive.")
-    
     if st.button(f"🔄 Generate Combined Chart for {selected_month}"):
         combined_data = []
         for _, row in st.session_state.df.iterrows():
             mat_name = str(row["Material"]).strip()
-            total_pallets = 0.0
-            total_rolls = 0.0
-            
+            total_pallets, total_rolls = 0.0, 0.0
             for site in site_options:
                 pallet_col = f"{site}_Pallets {selected_month}"
                 roll_col = f"{site}_Rolls {selected_month}"
-                
                 if pallet_col in st.session_state.df.columns:
                     try: total_pallets += float(str(row[pallet_col]).replace(',', '').strip()) if str(row[pallet_col]).strip() != "" else 0
                     except: pass
-                    
                 if roll_col in st.session_state.df.columns:
                     try: total_rolls += float(str(row[roll_col]).replace(',', '').strip()) if str(row[roll_col]).strip() != "" else 0
                     except: pass
@@ -242,24 +257,16 @@ elif app_mode == "📈 Stock Trends":
             combined_data.append({"Material": mat_name, "Unit Type": "Rolls", "Quantity": total_rolls})
             
         df_combined = pd.DataFrame(combined_data)
-        
         fig_combined = px.bar(
-            df_combined, 
-            x="Material", 
-            y="Quantity", 
-            color="Unit Type",
-            barmode="group",
-            title=f"Total Pallets & Rolls by Material Type across All Warehouses ({selected_month})",
-            labels={"Quantity": "Total Stock Count", "Material": "Material Width & Type"},
+            df_combined, x="Material", y="Quantity", color="Unit Type", barmode="group",
+            title=f"Total Pallets & Rolls across All Warehouses ({selected_month})",
             color_discrete_map={"Pallets": "#1f77b4", "Rolls": "#ff7f0e"}
         )
-        fig_combined.update_layout(xaxis_tickangle=-45, legend_title_text='Stock Unit')
         st.plotly_chart(fig_combined, use_container_width=True)
 
-    # --- NEW FEATURE: STANDALONE PENDING ORDERS BAR CHART ---
+    # --- STANDALONE PENDING ORDERS BAR CHART ---
     st.divider()
     st.subheader(f"⏳ Standalone Pending Orders Chart ({selected_month})")
-    st.caption("Standalone analysis tool to extract and graph incoming quantities currently outstanding in the 'Pending_Orders' sheet.")
 
     if st.button(f"📊 Generate Standalone Pending Chart for {selected_month}"):
         client = get_gspread_client()
@@ -271,83 +278,37 @@ elif app_mode == "📈 Stock Trends":
                 df_pending = pd.DataFrame(pending_data)
                 df_pending.columns = [str(c).strip() for c in df_pending.columns]
                 
-                # Dynamically evaluate the column naming structures
-                qty_col = "Final_Actual_Order" if "Final_Actual_Order" in df_pending.columns else "Final Actual Order (Qty)"
+                p_col = "Pending_Pallets" if "Pending_Pallets" in df_pending.columns else "Pending Pallets"
+                r_col = "Pending_Rolls" if "Pending_Rolls" in df_pending.columns else "Pending Rolls"
                 
-                if qty_col in df_pending.columns:
-                    df_pending[qty_col] = pd.to_numeric(df_pending[qty_col], errors='coerce').fillna(0)
+                if p_col in df_pending.columns and r_col in df_pending.columns:
+                    df_pending[p_col] = pd.to_numeric(df_pending[p_col], errors='coerce').fillna(0)
+                    df_pending[r_col] = pd.to_numeric(df_pending[r_col], errors='coerce').fillna(0)
                     
-                    # Group matching material variants together
-                    grouped_pending = df_pending.groupby('Material', as_index=False)[qty_col].sum()
+                    grouped_p = df_pending.groupby('Material', as_index=False)[[p_col, r_col]].sum()
                     
                     pending_graph_data = []
-                    for _, p_row in grouped_pending.iterrows():
-                        mat_name = str(p_row["Material"]).strip()
-                        total_qty = float(p_row[qty_col])
+                    for _, p_row in grouped_p.iterrows():
+                        mat_name = p_row["Material"]
+                        pending_graph_data.append({"Material": mat_name, "Unit Type": "Pallets", "Quantity": float(p_row[p_col])})
+                        pending_graph_data.append({"Material": mat_name, "Unit Type": "Rolls", "Quantity": float(p_row[r_col])})
                         
-                        if total_qty <= 0:
-                            continue
-                        
-                        # Sort into unit rules matching your thresholds config
-                        unit_type = "Pallets"
-                        if mat_name in thresholds:
-                            unit_type = thresholds[mat_name]["unit"]
-                        
-                        pallets_val = total_qty if unit_type == "Pallets" else 0.0
-                        rolls_val = total_qty if unit_type == "Rolls" else 0.0
-                        
-                        pending_graph_data.append({"Material Width & Type": mat_name, "Unit Type": "Pallets", "Quantity": pallets_val})
-                        pending_graph_data.append({"Material Width & Type": mat_name, "Unit Type": "Rolls", "Quantity": rolls_val})
-                    
-                    if pending_graph_data:
-                        df_pending_graph = pd.DataFrame(pending_graph_data)
-                        
-                        # Separate independent Plotly graph object
-                        fig_standalone_pending = px.bar(
-                            df_pending_graph,
-                            x="Material Width & Type",
-                            y="Quantity",
-                            color="Unit Type",
-                            barmode="group",
-                            title=f"Pending Materials Outstanding: Combined Warehouses ({selected_month})",
-                            labels={"Quantity": "Pending Order Quantity", "Material Width & Type": "Material Type"},
-                            color_discrete_map={"Pallets": "#2ca02c", "Rolls": "#9467bd"} # Alternating unique colors
-                        )
-                        fig_standalone_pending.update_layout(xaxis_tickangle=-45, legend_title_text='Unit Class')
-                        st.plotly_chart(fig_standalone_pending, use_container_width=True)
-                    else:
-                        st.warning("No valid pending quantities greater than zero found.")
-                else:
-                    st.error(f"Could not identify actual order quantity columns in sheet. Found: {list(df_pending.columns)}")
+                    df_pending_graph = pd.DataFrame(pending_graph_data)
+                    fig_standalone_pending = px.bar(
+                        df_pending_graph, x="Material", y="Quantity", color="Unit Type", barmode="group",
+                        title="Pending Materials Outstanding (All Warehouses Combined)",
+                        color_discrete_map={"Pallets": "#2ca02c", "Rolls": "#9467bd"}
+                    )
+                    st.plotly_chart(fig_standalone_pending, use_container_width=True)
             else:
-                st.info("The 'Pending_Orders' sheet is currently empty. No pending materials to chart.")
+                st.info("The 'Pending_Orders' sheet is currently empty.")
         except Exception as e:
             st.error(f"Could not read 'Pending_Orders' tab: {e}")
-
-    # --- SECTION B: ORIGINAL LINE TREND ---
-    st.divider()
-    st.subheader("📈 Historical Material Trend")
-    target_mat = st.selectbox("Select Material to Track", st.session_state.df["Material"].unique())
-    trend_data = []
-    
-    row = st.session_state.df[st.session_state.df["Material"] == target_mat].iloc[0]
-    for m in months:
-        gross_pallets = 0
-        for site in site_options:
-            col = f"{site}_Pallets {m}"
-            if col in st.session_state.df.columns:
-                try: gross_pallets += float(row[col])
-                except: pass
-        trend_data.append({"Month": m, "Pallets": gross_pallets})
-    
-    df_trend = pd.DataFrame(trend_data)
-    fig = px.line(df_trend, x="Month", y="Pallets", title=f"Gross Pallet Stock Trend: {target_mat}", markers=True)
-    st.plotly_chart(fig, use_container_width=True)
 
 # --- MODE 3: RECEIVE GOODS ---
 elif app_mode == "🚛 Receive Goods (KPark)":
     st.title("🚛 Goods Receiving (KPark)")
-    st.info("Check items that have arrived to automatically add them to KPark stock.")
+    st.info("Check items that have arrived to update KPark stock metrics automatically.")
     
     client = get_gspread_client()
     try:
@@ -368,24 +329,40 @@ elif app_mode == "🚛 Receive Goods (KPark)":
                 received = receive_editor[receive_editor["Received?"] == True]
                 if not received.empty:
                     main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
-                    k_col_name = f"KPark_Pallets {selected_month}"
-                    k_col_idx = st.session_state.df.columns.get_loc(k_col_name) + 1
+                    
+                    kp_pallet_col = f"KPark_Pallets {selected_month}"
+                    kp_roll_col = f"KPark_Rolls {selected_month}"
+                    kp_m2_col = f"KPark_SquareM {selected_month}"
+                    
+                    idx_p = st.session_state.df.columns.get_loc(kp_pallet_col) + 1
+                    idx_r = st.session_state.df.columns.get_loc(kp_roll_col) + 1
+                    idx_m = st.session_state.df.columns.get_loc(kp_m2_col) + 1
                     
                     for _, row in received.iterrows():
                         cell = main_sheet.find(str(row["Code"]))
-                        current_val = float(main_sheet.cell(cell.row, k_col_idx).value or 0)
-                        # Add the "Final Actual Order" amount to current stock
-                        new_val = current_val + float(row["Final_Actual_Order"])
-                        main_sheet.update_cell(cell.row, k_col_idx, new_val)
+                        
+                        # Extract exact values being accepted from the ledger columns
+                        incoming_pallets = float(row.get("Pending_Pallets", 0) or row.get("Pending Pallets", 0))
+                        incoming_rolls = float(row.get("Pending_Rolls", 0) or row.get("Pending Rolls", 0))
+                        incoming_m2 = float(row.get("Pending_m2", 0) or row.get("Pending m²", 0))
+                        
+                        # Increment existing values safely
+                        cur_p = float(main_sheet.cell(cell.row, idx_p).value or 0)
+                        cur_r = float(main_sheet.cell(cell.row, idx_r).value or 0)
+                        cur_m = float(main_sheet.cell(cell.row, idx_m).value or 0)
+                        
+                        main_sheet.update_cell(cell.row, idx_p, cur_p + incoming_pallets)
+                        main_sheet.update_cell(cell.row, idx_r, cur_r + incoming_rolls)
+                        main_sheet.update_cell(cell.row, idx_m, cur_m + incoming_m2)
                     
                     # Cleanup Pending list
                     remaining = receive_editor[receive_editor["Received?"] == False].drop(columns=["Received?"])
                     pending_sheet.clear()
-                    pending_sheet.append_row(["Material", "Code", "Order_Qty", "Order_m2", "Final_Actual_Order", "Notes"])
+                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Notes"])
                     if not remaining.empty:
                         pending_sheet.append_rows(remaining.values.tolist())
                     
-                    st.success("KPark stock updated successfully!"); st.rerun()
+                    st.success("KPark stock records incremented correctly!"); st.rerun()
         else:
             st.write("No pending orders currently in the system.")
     except Exception as e:
@@ -403,60 +380,23 @@ elif app_mode == "📋 View Pending Orders":
         
         if pending_data:
             df_pending = pd.DataFrame(pending_data)
+            df_pending.columns = [str(c).strip() for c in df_pending.columns]
+            
+            # Harmonize alternative column naming standardizations
+            p_col = "Pending_Pallets" if "Pending_Pallets" in df_pending.columns else "Pending Pallets"
+            r_col = "Pending_Rolls" if "Pending_Rolls" in df_pending.columns else "Pending Rolls"
+            m2_col = "Pending_m2" if "Pending_m2" in df_pending.columns else "Pending m²"
+
+            df_pending[p_col] = pd.to_numeric(df_pending[p_col], errors='coerce').fillna(0)
+            df_pending[r_col] = pd.to_numeric(df_pending[r_col], errors='coerce').fillna(0)
+            df_pending[m2_col] = pd.to_numeric(df_pending[m2_col], errors='coerce').fillna(0)
             
             # --- KPI METRICS ---
-            df_pending['Final_Actual_Order'] = pd.to_numeric(df_pending['Final_Actual_Order'], errors='coerce').fillna(0)
-            m1, m2 = st.columns(2)
-            m1.metric("Pending Line Items", len(df_pending))
-            m2.metric("Total Outstanding Qty", f"{df_pending['Final_Actual_Order'].sum():,.1f}")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Pending Items", len(df_pending))
+            m2.metric("Total Pending Pallets", f"{df_pending[p_col].sum():,.1f}")
+            m3.metric("Total Pending Volume ($m^2$)", f"{df_pending[m2_col].sum():,.1f} m²")
 
-            st.divider()
-
-            # --- NEW FEATURE: GENERATE VISUALIZATION BUTTON ---
-            st.subheader(f"📊 Pending Order Summary Graph ({selected_month})")
-            
-            if st.button(f"🔄 Generate Pending Graph for {selected_month}"):
-                graph_data = []
-                
-                # Group pending rows by Material to consolidate duplicate rows if any exist
-                grouped_pending = df_pending.groupby('Material', as_index=False)['Final_Actual_Order'].sum()
-                
-                for _, p_row in grouped_pending.iterrows():
-                    mat_name = str(p_row["Material"]).strip()
-                    total_qty = float(p_row["Final_Actual_Order"])
-                    
-                    # Look up threshold units to distinguish Pallets vs Rolls
-                    unit_type = "Pallets" # Default fallback
-                    if mat_name in thresholds:
-                        unit_type = thresholds[mat_name]["unit"]
-                    
-                    # Split into graph tracking values
-                    pallets_val = total_qty if unit_type == "Pallets" else 0.0
-                    rolls_val = total_qty if unit_type == "Rolls" else 0.0
-                    
-                    graph_data.append({"Material": mat_name, "Unit Type": "Pallets", "Quantity": pallets_val})
-                    graph_data.append({"Material": mat_name, "Unit Type": "Rolls", "Quantity": rolls_val})
-                
-                if graph_data:
-                    df_graph = pd.DataFrame(graph_data)
-                    
-                    # Generate Grouped Bar Chart via Plotly Express
-                    fig_pending = px.bar(
-                        df_graph,
-                        x="Material",
-                        y="Quantity",
-                        color="Unit Type",
-                        barmode="group",
-                        title=f"Total Pending Quantities Ordered for {selected_month} (All Warehouses Combined)",
-                        labels={"Quantity": "Pending Quantity", "Material": "Material Width & Type"},
-                        color_discrete_map={"Pallets": "#1f77b4", "Rolls": "#ff7f0e"}
-                    )
-                    
-                    fig_pending.update_layout(xaxis_tickangle=-45, legend_title_text='Unit Class')
-                    st.plotly_chart(fig_pending, use_container_width=True)
-                else:
-                    st.warning("No clear data matched for mapping.")
-            
             st.divider()
 
             # --- EDITABLE TABLE FOR DELETION ---
@@ -468,8 +408,10 @@ elif app_mode == "📋 View Pending Orders":
                     "Select to Delete": st.column_config.CheckboxColumn("🗑️", help="Select rows to remove"),
                     "Material": st.column_config.TextColumn("Material", disabled=True),
                     "Code": st.column_config.TextColumn("Code", disabled=True),
-                    "Final_Actual_Order": st.column_config.NumberColumn("Qty Ordered", format="%.1f", disabled=True),
-                    "Notes": st.column_config.TextColumn("Notes", width="large", disabled=True)
+                    p_col: st.column_config.NumberColumn("Pallets Ordered", format="%.1f", disabled=True),
+                    r_col: st.column_config.NumberColumn("Rolls Ordered", format="%.1f", disabled=True),
+                    m2_col: st.column_config.NumberColumn("Total Area (m²)", format="%.2f", disabled=True),
+                    "Notes": st.column_config.TextColumn("Notes", width="medium", disabled=True)
                 },
                 hide_index=True,
                 use_container_width=True,
@@ -482,14 +424,13 @@ elif app_mode == "📋 View Pending Orders":
             with col_del:
                 if st.button("🗑️ Delete Selected", type="secondary"):
                     to_keep = edited_pending[edited_pending["Select to Delete"] == False].drop(columns=["Select to Delete"])
-                    
                     pending_sheet.clear()
-                    pending_sheet.append_row(["Material", "Code", "Order_Qty", "Order_m2", "Final_Actual_Order", "Notes"])
+                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Notes"])
                     
                     if not to_keep.empty:
                         pending_sheet.append_rows(to_keep.values.tolist())
                     
-                    st.warning("Selected orders removed from the pending list.")
+                    st.warning("Selected records stripped from the pending ledger tracker.")
                     st.rerun()
 
             with col_exp:
@@ -497,10 +438,9 @@ elif app_mode == "📋 View Pending Orders":
                 st.download_button(
                     label="📥 Export Pending List (CSV)",
                     data=csv,
-                    file_name=f"Pending_Orders_{datetime.now().strftime('%Y-%m-%d')}.csv",
+                    file_name=f"Detailed_Pending_Orders_{datetime.now().strftime('%Y-%m-%d')}.csv",
                     mime='text/csv',
                 )
-
         else:
             st.success("✨ All orders have been cleared or received.")
             
