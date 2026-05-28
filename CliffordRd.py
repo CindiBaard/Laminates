@@ -211,27 +211,29 @@ if app_mode == "📦 Stock Management":
                         p_count = act_qty if p_row['Unit_Type'] == "Pallets" else 0.0
                         r_count = act_qty if p_row['Unit_Type'] == "Rolls" else 0.0
                         
-                        # Mathematical conversions for total meters/square capacity
+                        # Mathematical conversions for total area capacity
                         m2p = float(p_row['m2_Per_Pallet'])
                         rop = float(p_row['Rolls_on_Pallet']) if float(p_row['Rolls_on_Pallet']) > 0 else 1
                         calculated_m2 = round(p_count * m2p + r_count * (m2p / rop), 2)
                         
+                        # We save both the broken down columns AND the requested consolidated 'Final_Actual_Order'
                         rows_to_append.append([
                             p_row['Material'],
                             p_row['Code'],
                             p_count,
                             r_count,
                             calculated_m2,
+                            act_qty,  # <--- Aligns with 'Final_Actual_Order'
                             p_row['Notes/Reason for Change']
                         ])
                 
                 if rows_to_append:
                     pending_sheet.append_rows(rows_to_append)
-                    st.success("Order added to Pending List with detailed breakdown! Ready for receiving mode.")
+                    st.success("Order added to Pending List successfully!")
                 else:
                     st.warning("Please enter at least one quantity.")
             except Exception as e:
-                st.error(f"Error: Ensure a tab named 'Pending_Orders' exists with columns: Material, Code, Pending_Pallets, Pending_Rolls, Pending_m2, Notes. Details: {e}")
+                st.error(f"Error saving order: {e}")
 
 # --- MODE 2: TRENDS & MONTHLY BREAKDOWN ---
 elif app_mode == "📈 Stock Trends":
@@ -382,20 +384,28 @@ elif app_mode == "📋 View Pending Orders":
             df_pending = pd.DataFrame(pending_data)
             df_pending.columns = [str(c).strip() for c in df_pending.columns]
             
-            # Harmonize alternative column naming standardizations
-            p_col = "Pending_Pallets" if "Pending_Pallets" in df_pending.columns else "Pending Pallets"
-            r_col = "Pending_Rolls" if "Pending_Rolls" in df_pending.columns else "Pending Rolls"
-            m2_col = "Pending_m2" if "Pending_m2" in df_pending.columns else "Pending m²"
+            # --- SAFE COLUMN MATCHING LOOKUPS ---
+            p_col = next((c for c in df_pending.columns if "pallet" in c.lower()), "Pending_Pallets")
+            r_col = next((c for c in df_pending.columns if "roll" in c.lower()), "Pending_Rolls")
+            m2_col = next((c for c in df_pending.columns if "m2" in c.lower() or "m²" in c.lower()), "Pending_m2")
+            act_col = next((c for c in df_pending.columns if "actual" in c.lower() or "final" in c.lower()), "Final_Actual_Order")
+            
+            # Initialize missing columns gracefully to avoid runtime KeyError exceptions
+            for col in [p_col, r_col, m2_col, act_col]:
+                if col not in df_pending.columns:
+                    df_pending[col] = 0.0
 
-            df_pending[p_col] = pd.to_numeric(df_pending[p_col], errors='coerce').fillna(0)
-            df_pending[r_col] = pd.to_numeric(df_pending[r_col], errors='coerce').fillna(0)
-            df_pending[m2_col] = pd.to_numeric(df_pending[m2_col], errors='coerce').fillna(0)
+            # Safely cast tracking columns to numeric types
+            df_pending[p_col] = pd.to_numeric(df_pending[p_col], errors='coerce').fillna(0.0)
+            df_pending[r_col] = pd.to_numeric(df_pending[r_col], errors='coerce').fillna(0.0)
+            df_pending[m2_col] = pd.to_numeric(df_pending[m2_col], errors='coerce').fillna(0.0)
+            df_pending[act_col] = pd.to_numeric(df_pending[act_col], errors='coerce').fillna(0.0)
             
             # --- KPI METRICS ---
             m1, m2, m3 = st.columns(3)
-            m1.metric("Pending Items", len(df_pending))
+            m1.metric("Pending Line Items", len(df_pending))
             m2.metric("Total Pending Pallets", f"{df_pending[p_col].sum():,.1f}")
-            m3.metric("Total Pending Volume ($m^2$)", f"{df_pending[m2_col].sum():,.1f} m²")
+            m3.metric("Total Pending Area", f"{df_pending[m2_col].sum():,.1f} m²")
 
             st.divider()
 
@@ -408,9 +418,10 @@ elif app_mode == "📋 View Pending Orders":
                     "Select to Delete": st.column_config.CheckboxColumn("🗑️", help="Select rows to remove"),
                     "Material": st.column_config.TextColumn("Material", disabled=True),
                     "Code": st.column_config.TextColumn("Code", disabled=True),
-                    p_col: st.column_config.NumberColumn("Pallets Ordered", format="%.1f", disabled=True),
-                    r_col: st.column_config.NumberColumn("Rolls Ordered", format="%.1f", disabled=True),
+                    p_col: st.column_config.NumberColumn("Pallets", format="%.1f", disabled=True),
+                    r_col: st.column_config.NumberColumn("Rolls", format="%.1f", disabled=True),
                     m2_col: st.column_config.NumberColumn("Total Area (m²)", format="%.2f", disabled=True),
+                    act_col: st.column_config.NumberColumn("Final Actual Order", format="%.1f", disabled=True),
                     "Notes": st.column_config.TextColumn("Notes", width="medium", disabled=True)
                 },
                 hide_index=True,
@@ -425,7 +436,9 @@ elif app_mode == "📋 View Pending Orders":
                 if st.button("🗑️ Delete Selected", type="secondary"):
                     to_keep = edited_pending[edited_pending["Select to Delete"] == False].drop(columns=["Select to Delete"])
                     pending_sheet.clear()
-                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Notes"])
+                    
+                    # Force rewrite structural clean columns back to sheet base header row
+                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Final_Actual_Order", "Notes"])
                     
                     if not to_keep.empty:
                         pending_sheet.append_rows(to_keep.values.tolist())
