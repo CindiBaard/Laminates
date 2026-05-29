@@ -4,6 +4,7 @@ import plotly.express as px
 from google.oauth2 import service_account
 import gspread
 import io
+import re
 from datetime import datetime
 
 # --- 1. CONFIGURATION ---
@@ -34,6 +35,10 @@ def load_data():
     df.columns = [str(c).strip() for c in df.columns]
     return df, sheet
 
+# Helper function to extract numerical values safely from text strings
+def safe_extract_numeric(series):
+    return series.astype(str).str.extract(r'([-+]?\d*\.\d+|\d+)')[0].astype(float).fillna(0.0)
+
 # --- 3. SESSION STATE ---
 if 'df' not in st.session_state:
     try:
@@ -48,7 +53,7 @@ app_mode = st.sidebar.radio("Select Mode", [
     "📦 Stock Management", 
     "📋 View Pending Orders",
     "📈 Stock Trends", 
-    "¼🚛 Receive Goods (KPark)"
+    "🚛 Receive Goods (KPark)"
 ])
 
 site_options = ["CliffordRd", "KPark", "HarrisDrive"]
@@ -290,8 +295,8 @@ elif app_mode == "📈 Stock Trends":
                 r_col = "Pending_Rolls"
                 
                 if p_col in df_pending.columns and r_col in df_pending.columns:
-                    df_pending[p_col] = pd.to_numeric(df_pending[p_col], errors='coerce').fillna(0)
-                    df_pending[r_col] = pd.to_numeric(df_pending[r_col], errors='coerce').fillna(0)
+                    df_pending[p_col] = safe_extract_numeric(df_pending[p_col])
+                    df_pending[r_col] = safe_extract_numeric(df_pending[r_col])
                     
                     grouped_p = df_pending.groupby('Material', as_index=False)[[p_col, r_col]].sum()
                     
@@ -314,7 +319,7 @@ elif app_mode == "📈 Stock Trends":
             st.error(f"Could not read 'Pending_Orders' tab: {e}")
 
 # --- MODE 3: RECEIVE GOODS ---
-elif app_mode == "¼🚛 Receive Goods (KPark)":
+elif app_mode == "🚛 Receive Goods (KPark)":
     st.title("🚛 Goods Receiving (KPark)")
     st.info("Check items that have arrived to update KPark stock metrics automatically.")
     
@@ -325,6 +330,25 @@ elif app_mode == "¼🚛 Receive Goods (KPark)":
         
         if pending_data:
             pending_df = pd.DataFrame(pending_data)
+            pending_df.columns = [str(c).strip() for c in pending_df.columns]
+            
+            p_col = "Pending_Pallets"
+            r_col = "Pending_Rolls"
+            m2_col = "Pending_m2"
+            act_col = "Final_Actual_Order"
+            
+            if p_col in pending_df.columns:
+                pending_df[p_col] = safe_extract_numeric(pending_df[p_col])
+            if r_col in pending_df.columns:
+                pending_df[r_col] = safe_extract_numeric(pending_df[r_col])
+            if m2_col in pending_df.columns:
+                pending_df[m2_col] = safe_extract_numeric(pending_df[m2_col])
+            if act_col in pending_df.columns:
+                pending_df[act_col] = safe_extract_numeric(pending_df[act_col])
+                
+            if "OrderNotes" in pending_df.columns:
+                pending_df.rename(columns={"OrderNotes": "Notes"}, inplace=True)
+                
             pending_df["Received?"] = False
             
             receive_editor = st.data_editor(
@@ -364,7 +388,7 @@ elif app_mode == "¼🚛 Receive Goods (KPark)":
                     # Cleanup Pending list
                     remaining = receive_editor[receive_editor["Received?"] == False].drop(columns=["Received?"])
                     pending_sheet.clear()
-                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Final_Actual_Order", "OrderNotes"])
+                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Final_Actual_Order", "Notes"])
                     if not remaining.empty:
                         pending_sheet.append_rows(remaining.values.tolist())
                     
@@ -393,10 +417,14 @@ elif app_mode == "📋 View Pending Orders":
             r_col = "Pending_Rolls"
             m2_col = "Pending_m2"
             act_col = "Final_Actual_Order"
-            notes_col = "Notes"
             
-            if "Notes" in df_pending.columns and "Notes" not in df_pending.columns:
-                df_pending.rename(columns={"Notes": "Notes"}, inplace=True)
+            # Harmonize column names between Notes and OrderNotes
+            if "OrderNotes" in df_pending.columns:
+                df_pending.rename(columns={"OrderNotes": "Notes"}, inplace=True)
+            elif "Notes" not in df_pending.columns:
+                df_pending["Notes"] = ""
+                
+            notes_col = "Notes"
                 
             missing_cols = [c for c in ["Material", "Code", p_col, r_col, m2_col, act_col, notes_col] if c not in df_pending.columns]
             if missing_cols:
@@ -404,10 +432,11 @@ elif app_mode == "📋 View Pending Orders":
                 st.info("Please check that the column headers on your 'Pending_Orders' tab match perfectly.")
                 st.stop()
 
-            df_pending[p_col] = pd.to_numeric(df_pending[p_col], errors='coerce').fillna(0.0)
-            df_pending[r_col] = pd.to_numeric(df_pending[r_col], errors='coerce').fillna(0.0)
-            df_pending[m2_col] = pd.to_numeric(df_pending[m2_col], errors='coerce').fillna(0.0)
-            df_pending[act_col] = pd.to_numeric(df_pending[act_col], errors='coerce').fillna(0.0)
+            # Clean and parse metrics by extracting first occurring digit patterns safely
+            df_pending[p_col] = safe_extract_numeric(df_pending[p_col])
+            df_pending[r_col] = safe_extract_numeric(df_pending[r_col])
+            df_pending[m2_col] = safe_extract_numeric(df_pending[m2_col])
+            df_pending[act_col] = safe_extract_numeric(df_pending[act_col])
             
             display_order = ["Material", "Code", p_col, r_col, m2_col, act_col, notes_col]
             df_pending = df_pending[display_order]
