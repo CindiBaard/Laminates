@@ -39,7 +39,8 @@ if 'df' not in st.session_state:
     try:
         st.session_state.df, _ = load_data()
     except Exception as e:
-        st.error(f"⚠️ Auth Error: {e}"); st.stop()
+        st.error(f"⚠️ Auth Error: {e}")
+        st.stop()
 
 # --- 4. SIDEBAR NAVIGATION ---
 st.sidebar.header("Navigation")
@@ -47,7 +48,7 @@ app_mode = st.sidebar.radio("Select Mode", [
     "📦 Stock Management", 
     "📋 View Pending Orders",
     "📈 Stock Trends", 
-    "🚛 Receive Goods (KPark)"
+    "¼🚛 Receive Goods (KPark)"
 ])
 
 site_options = ["CliffordRd", "KPark", "HarrisDrive"]
@@ -108,8 +109,10 @@ if app_mode == "📦 Stock Management":
             for site in site_options:
                 c_name = f"{site}_{metric} {selected_month}"
                 val = edited_row[c_name] if site == selected_site and c_name in edited_row else row.get(c_name, 0)
-                try: total += float(str(val).replace(',', '').strip()) if str(val).strip() != "" else 0
-                except: pass
+                try: 
+                    total += float(str(val).replace(',', '').strip()) if str(val).strip() != "" else 0
+                except: 
+                    pass
             mat_sum[f"Gross {metric}"] = total
         
         # Threshold Checks
@@ -170,7 +173,8 @@ if app_mode == "📦 Stock Management":
 
     if low_stock_alerts:
         with st.expander("🚩 View Low Stock Flags", expanded=True):
-            for alert in low_stock_alerts: st.write(alert)
+            for alert in low_stock_alerts: 
+                st.write(alert)
 
     # --- PROCUREMENT OVERRIDE ---
     st.divider()
@@ -211,7 +215,6 @@ if app_mode == "📦 Stock Management":
                         p_count = act_qty if p_row['Unit_Type'] == "Pallets" else 0.0
                         r_count = act_qty if p_row['Unit_Type'] == "Rolls" else 0.0
                         
-                        # Mathematical conversions for total area capacity
                         m2p = float(p_row['m2_Per_Pallet'])
                         rop = float(p_row['Rolls_on_Pallet']) if float(p_row['Rolls_on_Pallet']) > 0 else 1
                         calculated_m2 = round(p_count * m2p + r_count * (m2p / rop), 2)
@@ -248,11 +251,15 @@ elif app_mode == "📈 Stock Trends":
                 pallet_col = f"{site}_Pallets {selected_month}"
                 roll_col = f"{site}_Rolls {selected_month}"
                 if pallet_col in st.session_state.df.columns:
-                    try: total_pallets += float(str(row[pallet_col]).replace(',', '').strip()) if str(row[pallet_col]).strip() != "" else 0
-                    except: pass
+                    try: 
+                        total_pallets += float(str(row[pallet_col]).replace(',', '').strip()) if str(row[pallet_col]).strip() != "" else 0
+                    except: 
+                        pass
                 if roll_col in st.session_state.df.columns:
-                    try: total_rolls += float(str(row[roll_col]).replace(',', '').strip()) if str(row[roll_col]).strip() != "" else 0
-                    except: pass
+                    try: 
+                        total_rolls += float(str(row[roll_col]).replace(',', '').strip()) if str(row[roll_col]).strip() != "" else 0
+                    except: 
+                        pass
             
             combined_data.append({"Material": mat_name, "Unit Type": "Pallets", "Quantity": total_pallets})
             combined_data.append({"Material": mat_name, "Unit Type": "Rolls", "Quantity": total_rolls})
@@ -275,11 +282,11 @@ elif app_mode == "📈 Stock Trends":
             pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
             pending_data = pending_sheet.get_all_records()
             
-            str(c).strip():
+            if pending_data:
                 df_pending = pd.DataFrame(pending_data)
                 df_pending.columns = [str(c).strip() for c in df_pending.columns]
                 
-                p_col = "MaterialCodePending_PalletsPending_RollsPending_m2Final_Actual_OrderNotes" if "MaterialCodePending_PalletsPending_RollsPending_m2Final_Actual_OrderNotes" in df_pending.columns else "Pending_Pallets"
+                p_col = "Pending_Pallets"
                 r_col = "Pending_Rolls"
                 
                 if p_col in df_pending.columns and r_col in df_pending.columns:
@@ -307,7 +314,7 @@ elif app_mode == "📈 Stock Trends":
             st.error(f"Could not read 'Pending_Orders' tab: {e}")
 
 # --- MODE 3: RECEIVE GOODS ---
-elif app_mode == "🚛 Receive Goods (KPark)":
+elif app_mode == "¼🚛 Receive Goods (KPark)":
     st.title("🚛 Goods Receiving (KPark)")
     st.info("Check items that have arrived to update KPark stock metrics automatically.")
     
@@ -357,11 +364,12 @@ elif app_mode == "🚛 Receive Goods (KPark)":
                     # Cleanup Pending list
                     remaining = receive_editor[receive_editor["Received?"] == False].drop(columns=["Received?"])
                     pending_sheet.clear()
-                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Final_Actual_Order", "Notes"])
+                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Final_Actual_Order", "OrderNotes"])
                     if not remaining.empty:
                         pending_sheet.append_rows(remaining.values.tolist())
                     
-                    st.success("KPark stock records incremented correctly!"); st.rerun()
+                    st.success("KPark stock records incremented correctly!")
+                    st.rerun()
         else:
             st.write("No pending orders currently in the system.")
     except Exception as e:
@@ -377,32 +385,30 @@ elif app_mode == "📋 View Pending Orders":
         pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
         pending_data = pending_sheet.get_all_records()
         
-        str(c).strip():
+        if pending_data:
             df_pending = pd.DataFrame(pending_data)
-            
-            # 1. CLEAN HEADERS (Crucial step to remove hidden white spaces)
             df_pending.columns = [str(c).strip() for c in df_pending.columns]
             
             p_col = "Pending_Pallets"
             r_col = "Pending_Rolls"
             m2_col = "Pending_m2"
             act_col = "Final_Actual_Order"
-            notes_col = "Notes"
+            notes_col = "OrderNotes"
             
-            # 2. Check if the column exists; if not, alert instead of masking with 0.0
+            if "Notes" in df_pending.columns and "OrderNotes" not in df_pending.columns:
+                df_pending.rename(columns={"Notes": "OrderNotes"}, inplace=True)
+                
             missing_cols = [c for c in ["Material", "Code", p_col, r_col, m2_col, act_col, notes_col] if c not in df_pending.columns]
             if missing_cols:
                 st.error(f"⚠️ Missing columns in Google Sheet: {missing_cols}")
                 st.info("Please check that the column headers on your 'Pending_Orders' tab match perfectly.")
                 st.stop()
 
-            # Safely cast tracking columns to numeric types
             df_pending[p_col] = pd.to_numeric(df_pending[p_col], errors='coerce').fillna(0.0)
             df_pending[r_col] = pd.to_numeric(df_pending[r_col], errors='coerce').fillna(0.0)
             df_pending[m2_col] = pd.to_numeric(df_pending[m2_col], errors='coerce').fillna(0.0)
             df_pending[act_col] = pd.to_numeric(df_pending[act_col], errors='coerce').fillna(0.0)
             
-            # Ensure proper presentation ordering matching requested structure
             display_order = ["Material", "Code", p_col, r_col, m2_col, act_col, notes_col]
             df_pending = df_pending[display_order]
 
@@ -416,8 +422,6 @@ elif app_mode == "📋 View Pending Orders":
 
             # --- EDITABLE TABLE FOR DELETION ---
             df_pending["Select to Delete"] = False
-            
-            # Combine columns selector structure logic
             editor_cols = ["Select to Delete"] + display_order
 
             edited_pending = st.data_editor(
@@ -444,8 +448,6 @@ elif app_mode == "📋 View Pending Orders":
                 if st.button("🗑️ Delete Selected", type="secondary"):
                     to_keep = edited_pending[edited_pending["Select to Delete"] == False].drop(columns=["Select to Delete"])
                     pending_sheet.clear()
-                    
-                    # Force rewrite structural clean columns back to sheet base header row
                     pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Final_Actual_Order", "OrderNotes"])
                     
                     if not to_keep.empty:
