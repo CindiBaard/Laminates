@@ -377,7 +377,7 @@ elif app_mode == "📋 View Pending Orders":
         pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
         pending_data = pending_sheet.get_all_records()
         
-        if pending_data:
+        str(c).strip():
             df_pending = pd.DataFrame(pending_data)
             
             # 1. CLEAN HEADERS (Crucial step to remove hidden white spaces)
