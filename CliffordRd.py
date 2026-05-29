@@ -387,7 +387,7 @@ elif app_mode == "📋 View Pending Orders":
             r_col = "Pending_Rolls"
             m2_col = "Pending_m2"
             act_col = "Final_Actual_Order"
-            notes_col = "OrderNotes"
+            notes_col = "Notes"
             
             # 2. Check if the column exists; if not, alert instead of masking with 0.0
             missing_cols = [c for c in ["Material", "Code", p_col, r_col, m2_col, act_col, notes_col] if c not in df_pending.columns]
