@@ -430,7 +430,7 @@ elif app_mode == "📋 View Pending Orders":
                     r_col: st.column_config.NumberColumn("Pending_Rolls", format="%.1f", disabled=True),
                     m2_col: st.column_config.NumberColumn("Pending_m2", format="%.2f", disabled=True),
                     act_col: st.column_config.NumberColumn("Final_Actual_Order", format="%.1f", disabled=True),
-                    notes_col: st.column_config.TextColumn("OrderNotes", width="medium", disabled=True)
+                    notes_col: st.column_config.TextColumn("Notes", width="medium", disabled=True)
                 },
                 hide_index=True,
                 use_container_width=True,
