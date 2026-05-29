@@ -379,19 +379,22 @@ elif app_mode == "📋 View Pending Orders":
         
         if pending_data:
             df_pending = pd.DataFrame(pending_data)
+            
+            # 1. CLEAN HEADERS (Crucial step to remove hidden white spaces)
             df_pending.columns = [str(c).strip() for c in df_pending.columns]
             
-            # --- STRUCTURE HEADINGS ALIGNMENT ---
             p_col = "Pending_Pallets"
             r_col = "Pending_Rolls"
             m2_col = "Pending_m2"
             act_col = "Final_Actual_Order"
             notes_col = "OrderNotes"
             
-            # Initialize missing columns gracefully to avoid runtime KeyError exceptions
-            for col in ["Material", "Code", p_col, r_col, m2_col, act_col, notes_col]:
-                if col not in df_pending.columns:
-                    df_pending[col] = 0.0 if col != "Material" and col != "Code" and col != notes_col else ""
+            # 2. Check if the column exists; if not, alert instead of masking with 0.0
+            missing_cols = [c for c in ["Material", "Code", p_col, r_col, m2_col, act_col, notes_col] if c not in df_pending.columns]
+            if missing_cols:
+                st.error(f"⚠️ Missing columns in Google Sheet: {missing_cols}")
+                st.info("Please check that the column headers on your 'Pending_Orders' tab match perfectly.")
+                st.stop()
 
             # Safely cast tracking columns to numeric types
             df_pending[p_col] = pd.to_numeric(df_pending[p_col], errors='coerce').fillna(0.0)
