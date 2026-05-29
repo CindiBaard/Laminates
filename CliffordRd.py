@@ -275,7 +275,7 @@ elif app_mode == "📈 Stock Trends":
             pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
             pending_data = pending_sheet.get_all_records()
             
-            if pending_data:
+            str(c).strip():
                 df_pending = pd.DataFrame(pending_data)
                 df_pending.columns = [str(c).strip() for c in df_pending.columns]
                 
@@ -357,7 +357,7 @@ elif app_mode == "🚛 Receive Goods (KPark)":
                     # Cleanup Pending list
                     remaining = receive_editor[receive_editor["Received?"] == False].drop(columns=["Received?"])
                     pending_sheet.clear()
-                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Final_Actual_Order", "OrderNotes"])
+                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Final_Actual_Order", "Notes"])
                     if not remaining.empty:
                         pending_sheet.append_rows(remaining.values.tolist())
                     
