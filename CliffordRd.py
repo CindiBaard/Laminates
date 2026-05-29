@@ -393,10 +393,10 @@ elif app_mode == "📋 View Pending Orders":
             r_col = "Pending_Rolls"
             m2_col = "Pending_m2"
             act_col = "Final_Actual_Order"
-            notes_col = "OrderNotes"
+            notes_col = "Notes"
             
-            if "Notes" in df_pending.columns and "OrderNotes" not in df_pending.columns:
-                df_pending.rename(columns={"Notes": "OrderNotes"}, inplace=True)
+            if "Notes" in df_pending.columns and "Notes" not in df_pending.columns:
+                df_pending.rename(columns={"Notes": "Notes"}, inplace=True)
                 
             missing_cols = [c for c in ["Material", "Code", p_col, r_col, m2_col, act_col, notes_col] if c not in df_pending.columns]
             if missing_cols:
@@ -448,7 +448,7 @@ elif app_mode == "📋 View Pending Orders":
                 if st.button("🗑️ Delete Selected", type="secondary"):
                     to_keep = edited_pending[edited_pending["Select to Delete"] == False].drop(columns=["Select to Delete"])
                     pending_sheet.clear()
-                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Final_Actual_Order", "OrderNotes"])
+                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Final_Actual_Order", "Notes"])
                     
                     if not to_keep.empty:
                         pending_sheet.append_rows(to_keep.values.tolist())
