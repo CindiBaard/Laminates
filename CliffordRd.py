@@ -396,7 +396,7 @@ elif app_mode == "📈 Stock Trends":
                     "Pending Order (As Rolls)": "#2ca02c"      # Green
                 }
             )
-            fig_stacked.update_layout(yaxis_title="Total Quantity (Equivalent Rolls)", xlab_title="Material Type")
+            fig_stacked.update_layout(yaxis_title="Total Quantity (Equivalent Rolls)", xaxis_title="Material Type")
             st.plotly_chart(fig_stacked, use_container_width=True)
             
         except Exception as e:
