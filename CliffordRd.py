@@ -318,6 +318,90 @@ elif app_mode == "📈 Stock Trends":
         except Exception as e:
             st.error(f"Could not read 'Pending_Orders' tab: {e}")
 
+    # --- NEW CHART: COMBINED INVENTORY + PENDING STACKED ROLLS CHART ---
+    st.divider()
+    st.subheader(f"📈 Total Projected Availability (Stock + Pending Arrivals)")
+
+    if st.button(f"📊 Generate Cumulative Stock & Pending Chart"):
+        client = get_gspread_client()
+        try:
+            # 1. Gather current warehouse metrics
+            warehouse_roll_totals = {}
+            warehouse_pallet_totals = {}
+            
+            for _, row in st.session_state.df.iterrows():
+                mat_name = str(row["Material"]).strip()
+                t_pallets, t_rolls = 0.0, 0.0
+                for site in site_options:
+                    p_col = f"{site}_Pallets {selected_month}"
+                    r_col = f"{site}_Rolls {selected_month}"
+                    if p_col in st.session_state.df.columns:
+                        try: t_pallets += float(str(row[p_col]).replace(',', '').strip()) if str(row[p_col]).strip() != "" else 0
+                        except: pass
+                    if r_col in st.session_state.df.columns:
+                        try: t_rolls += float(str(row[r_col]).replace(',', '').strip()) if str(row[r_col]).strip() != "" else 0
+                        except: pass
+                warehouse_roll_totals[mat_name] = t_rolls
+                warehouse_pallet_totals[mat_name] = t_pallets
+
+            # 2. Gather matching metrics from pipeline orders tab
+            pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
+            pending_data = pending_sheet.get_all_records()
+            
+            pending_roll_totals = {}
+            if pending_data:
+                df_pend = pd.DataFrame(pending_data)
+                df_pend.columns = [str(c).strip() for c in df_pend.columns]
+                df_pend["Pending_Pallets"] = safe_extract_numeric(df_pend["Pending_Pallets"])
+                df_pend["Pending_Rolls"] = safe_extract_numeric(df_pend["Pending_Rolls"])
+                
+                # Group data to accommodate multiple duplicate raw entry line items safely
+                grouped_pend = df_pend.groupby('Material', as_index=False)[["Pending_Pallets", "Pending_Rolls"]].sum()
+                for _, p_row in grouped_pend.iterrows():
+                    m_name = str(p_row["Material"]).strip()
+                    
+                    # Convert incoming pallets to standalone rolls using original dataframe reference metadata
+                    matched_row = st.session_state.df[st.session_state.df["Material"].str.strip() == m_name]
+                    rop = 1.0
+                    if not matched_row.empty:
+                        rop = pd.to_numeric(matched_row.iloc[0]["Rolls_on_Pallet"], errors='coerce') or 1.0
+                    
+                    converted_rolls = (float(p_row["Pending_Pallets"]) * rop) + float(p_row["Pending_Rolls"])
+                    pending_roll_totals[m_name] = converted_rolls
+
+            # 3. Restructure layout for a unified stacked data frame matrix
+            stacked_chart_records = []
+            for _, row in st.session_state.df.iterrows():
+                mat_name = str(row["Material"]).strip()
+                rop = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
+                
+                # Translate physical floor pallets into base rolls for uniform stacked tracking
+                floor_pallet_rolls = warehouse_pallet_totals.get(mat_name, 0.0) * rop
+                floor_loose_rolls = warehouse_roll_totals.get(mat_name, 0.0)
+                incoming_pipeline_rolls = pending_roll_totals.get(mat_name, 0.0)
+                
+                stacked_chart_records.append({"Material": mat_name, "Stock Composition": "On-Hand Rolls", "Total Rolls": floor_loose_rolls})
+                stacked_chart_records.append({"Material": mat_name, "Stock Composition": "On-Hand Pallets (As Rolls)", "Total Rolls": floor_pallet_rolls})
+                stacked_chart_records.append({"Material": mat_name, "Stock Composition": "Pending Order (As Rolls)", "Total Rolls": incoming_pipeline_rolls})
+                
+            df_stack = pd.DataFrame(stacked_chart_records)
+            
+            # 4. Generate the final Plotly stacked configuration
+            fig_stacked = px.bar(
+                df_stack, x="Material", y="Total Rolls", color="Stock Composition", barmode="stack",
+                title=f"Total Projected Multi-Site Roll Volume vs. Pending Pipeline Additions ({selected_month})",
+                color_discrete_map={
+                    "On-Hand Rolls": "#ff7f0e",               # Orange
+                    "On-Hand Pallets (As Rolls)": "#1f77b4",   # Blue
+                    "Pending Order (As Rolls)": "#2ca02c"      # Green
+                }
+            )
+            fig_stacked.update_layout(yaxis_title="Total Quantity (Equivalent Rolls)", xlab_title="Material Type")
+            st.plotly_chart(fig_stacked, use_container_width=True)
+            
+        except Exception as e:
+            st.error(f"Error compiling cumulative stacked data metrics: {e}")
+
 # --- MODE 3: RECEIVE GOODS ---
 elif app_mode == "🚛 Receive Goods (KPark)":
     st.title("🚛 Goods Receiving (KPark)")
