@@ -318,9 +318,9 @@ elif app_mode == "📈 Stock Trends":
         except Exception as e:
             st.error(f"Could not read 'Pending_Orders' tab: {e}")
 
-    # --- NEW CHART: COMBINED INVENTORY + PENDING STACKED ROLLS CHART ---
+    # --- NEW CHART: COMBINED INVENTORY + PENDING STACKED PALLETS CHART ---
     st.divider()
-    st.subheader(f"📈 Total Projected Availability (Stock + Pending Arrivals)")
+    st.subheader(f"📈 Total Projected Availability (Stock + Pending Arrivals in Pallets)")
 
     if st.button(f"📊 Generate Cumulative Stock & Pending Chart"):
         client = get_gspread_client()
@@ -348,7 +348,7 @@ elif app_mode == "📈 Stock Trends":
             pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
             pending_data = pending_sheet.get_all_records()
             
-            pending_roll_totals = {}
+            pending_pallet_breakdown = {}
             if pending_data:
                 df_pend = pd.DataFrame(pending_data)
                 df_pend.columns = [str(c).strip() for c in df_pend.columns]
@@ -360,43 +360,48 @@ elif app_mode == "📈 Stock Trends":
                 for _, p_row in grouped_pend.iterrows():
                     m_name = str(p_row["Material"]).strip()
                     
-                    # Convert incoming pallets to standalone rolls using original dataframe reference metadata
+                    # Convert incoming loose rolls to fractional pallets using metadata reference
                     matched_row = st.session_state.df[st.session_state.df["Material"].str.strip() == m_name]
                     rop = 1.0
                     if not matched_row.empty:
                         rop = pd.to_numeric(matched_row.iloc[0]["Rolls_on_Pallet"], errors='coerce') or 1.0
                     
-                    converted_rolls = (float(p_row["Pending_Pallets"]) * rop) + float(p_row["Pending_Rolls"])
-                    pending_roll_totals[m_name] = converted_rolls
+                    # Store both direct pallets and fractional loose rolls converted to pallets
+                    pending_pallet_breakdown[m_name] = {
+                        "Direct_Pallets": float(p_row["Pending_Pallets"]),
+                        "Rolls_As_Pallets": float(p_row["Pending_Rolls"]) / rop
+                    }
 
-            # 3. Restructure layout for a unified stacked data frame matrix
+            # 3. Restructure layout for a unified stacked data frame matrix in Pallets
             stacked_chart_records = []
             for _, row in st.session_state.df.iterrows():
                 mat_name = str(row["Material"]).strip()
                 rop = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
                 
-                # Translate physical floor pallets into base rolls for uniform stacked tracking
-                floor_pallet_rolls = warehouse_pallet_totals.get(mat_name, 0.0) * rop
-                floor_loose_rolls = warehouse_roll_totals.get(mat_name, 0.0)
-                incoming_pipeline_rolls = pending_roll_totals.get(mat_name, 0.0)
+                # Translate physical floor metrics into Pallet fractions/units
+                floor_pallets = warehouse_pallet_totals.get(mat_name, 0.0)
+                floor_loose_rolls_as_pallets = warehouse_roll_totals.get(mat_name, 0.0) / rop
                 
-                stacked_chart_records.append({"Material": mat_name, "Stock Composition": "On-Hand Rolls", "Total Rolls": floor_loose_rolls})
-                stacked_chart_records.append({"Material": mat_name, "Stock Composition": "On-Hand Pallets (As Rolls)", "Total Rolls": floor_pallet_rolls})
-                stacked_chart_records.append({"Material": mat_name, "Stock Composition": "Pending Order (As Rolls)", "Total Rolls": incoming_pipeline_rolls})
+                pipeline_data = pending_pallet_breakdown.get(mat_name, {"Direct_Pallets": 0.0, "Rolls_As_Pallets": 0.0})
+                incoming_pallets_total = pipeline_data["Direct_Pallets"] + pipeline_data["Rolls_As_Pallets"]
+                
+                stacked_chart_records.append({"Material": mat_name, "Stock Composition": "On-Hand Pallets", "Total Pallets": floor_pallets})
+                stacked_chart_records.append({"Material": mat_name, "Stock Composition": "On-Hand Loose Rolls (As Pallets)", "Total Pallets": floor_loose_rolls_as_pallets})
+                stacked_chart_records.append({"Material": mat_name, "Stock Composition": "Pending Orders (As Pallets)", "Total Pallets": incoming_pallets_total})
                 
             df_stack = pd.DataFrame(stacked_chart_records)
             
             # 4. Generate the final Plotly stacked configuration
             fig_stacked = px.bar(
-                df_stack, x="Material", y="Total Rolls", color="Stock Composition", barmode="stack",
-                title=f"Total Projected Multi-Site Roll Volume vs. Pending Pipeline Additions ({selected_month})",
+                df_stack, x="Material", y="Total Pallets", color="Stock Composition", barmode="stack",
+                title=f"Total Projected Multi-Site Volume vs. Pending Pipeline Additions ({selected_month})",
                 color_discrete_map={
-                    "On-Hand Rolls": "#ff7f0e",               # Orange
-                    "On-Hand Pallets (As Rolls)": "#1f77b4",   # Blue
-                    "Pending Order (As Rolls)": "#2ca02c"      # Green
+                    "On-Hand Loose Rolls (As Pallets)": "#ff7f0e",   # Orange
+                    "On-Hand Pallets": "#1f77b4",                    # Blue
+                    "Pending Orders (As Pallets)": "#2ca02c"          # Green
                 }
             )
-            fig_stacked.update_layout(yaxis_title="Total Quantity (Equivalent Rolls)", xaxis_title="Material Type")
+            fig_stacked.update_layout(yaxis_title="Total Quantity (Equivalent Pallets)", xaxis_title="Material Type")
             st.plotly_chart(fig_stacked, use_container_width=True)
             
         except Exception as e:
@@ -543,11 +548,11 @@ elif app_mode == "📋 View Pending Orders":
                     "Select to Delete": st.column_config.CheckboxColumn("🗑️", help="Select rows to remove"),
                     "Material": st.column_config.TextColumn("Material", disabled=True),
                     "Code": st.column_config.TextColumn("Code", disabled=True),
-                    p_col: st.column_config.NumberColumn("Pending_Pallets", format="%.1f", disabled=True),
-                    r_col: st.column_config.NumberColumn("Pending_Rolls", format="%.1f", disabled=True),
-                    m2_col: st.column_config.NumberColumn("Pending_m2", format="%.2f", disabled=True),
-                    act_col: st.column_config.NumberColumn("Final_Actual_Order", format="%.1f", disabled=True),
-                    notes_col: st.column_config.TextColumn("Notes", width="medium", disabled=True)
+                    "Pending_Pallets": st.column_config.NumberColumn("Pending_Pallets", format="%.1f", disabled=True),
+                    "Pending_Rolls": st.column_config.NumberColumn("Pending_Rolls", format="%.1f", disabled=True),
+                    "Pending_m2": st.column_config.NumberColumn("Pending_m2", format="%.2f", disabled=True),
+                    "Final_Actual_Order": st.column_config.NumberColumn("Final_Actual_Order", format="%.1f", disabled=True),
+                    "Notes": st.column_config.TextColumn("Notes", width="medium", disabled=True)
                 },
                 hide_index=True,
                 use_container_width=True,
