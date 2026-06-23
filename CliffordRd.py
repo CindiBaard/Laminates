@@ -280,20 +280,20 @@ elif app_mode == "🚛 Receive Goods (KPark)":
             )
             
             if st.button("🚛 Confirm Arrival & Update KPark Inventory"):
-            received = receive_editor[receive_editor["Received?"] == True]
-            if not received.empty:
-            main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
-        
-        # 🔑 FIX: Use the current real-world month instead of the sidebar selection
-        current_month = datetime.now().strftime("%B") # Returns "June", "July", etc.
-        k_col_name = f"KPark_Pallets {current_month}"
-        
-        # Error handling just in case the column name isn't found in your sheet columns
-        if k_col_name in st.session_state.df.columns:
-            k_col_idx = st.session_state.df.columns.get_loc(k_col_name) + 1
-        else:
-            st.error(f"Could not find column '{k_col_name}' in the main sheet.")
-            st.stop()
+                received = receive_editor[receive_editor["Received?"] == True]
+                if not received.empty:
+                    main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+                    
+                    # 🔑 FIX: Use the current real-world month instead of the sidebar selection
+                    current_month = datetime.now().strftime("%B") # Returns "June", "July", etc.
+                    k_col_name = f"KPark_Pallets {current_month}"
+                    
+                    # Error handling just in case the column name isn't found in your sheet columns
+                    if k_col_name in st.session_state.df.columns:
+                        k_col_idx = st.session_state.df.columns.get_loc(k_col_name) + 1
+                    else:
+                        st.error(f"Could not find column '{k_col_name}' in the main sheet.")
+                        st.stop()
 
                     for _, row in received.iterrows():
                         cell = main_sheet.find(str(row["Code"]))
@@ -317,9 +317,10 @@ elif app_mode == "🚛 Receive Goods (KPark)":
                     st.rerun()
         else:
             st.write("No pending orders currently in the system.")
+            
     except Exception as e:
         st.error(f"Error accessing 'Pending_Orders' tab: {e}")
-
+        
 # --- MODE 4: PENDING ORDER DASHBOARD ---
 elif app_mode == "📋 View Pending Orders":
     st.title("📋 Current Pending Orders")
