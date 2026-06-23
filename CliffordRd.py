@@ -280,9 +280,9 @@ elif app_mode == "🚛 Receive Goods (KPark)":
             )
             
             if st.button("🚛 Confirm Arrival & Update KPark Inventory"):
-    received = receive_editor[receive_editor["Received?"] == True]
-    if not received.empty:
-        main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+            received = receive_editor[receive_editor["Received?"] == True]
+            if not received.empty:
+            main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
         
         # 🔑 FIX: Use the current real-world month instead of the sidebar selection
         current_month = datetime.now().strftime("%B") # Returns "June", "July", etc.
@@ -294,7 +294,7 @@ elif app_mode == "🚛 Receive Goods (KPark)":
         else:
             st.error(f"Could not find column '{k_col_name}' in the main sheet.")
             st.stop()
-              
+
                     for _, row in received.iterrows():
                         cell = main_sheet.find(str(row["Code"]))
                         current_val = float(main_sheet.cell(cell.row, k_col_idx).value or 0)
