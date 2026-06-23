@@ -284,43 +284,80 @@ elif app_mode == "🚛 Receive Goods (KPark)":
                 if not received.empty:
                     main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
                     
-                    # 🔑 FIX: Use the current real-world month instead of the sidebar selection
-                    current_month = datetime.now().strftime("%B") # Returns "June", "July", etc.
-                    k_col_name = f"KPark_Pallets {current_month}"
+                    # Target current live month column metrics
+                    current_month = datetime.now().strftime("%B") 
+                    k_pallet_col = f"KPark_Pallets {current_month}"
+                    k_roll_col = f"KPark_Rolls {current_month}"
+                    k_square_col = f"KPark_SquareM {current_month}"
                     
-                    # Error handling just in case the column name isn't found in your sheet columns
-                    if k_col_name in st.session_state.df.columns:
-                        k_col_idx = st.session_state.df.columns.get_loc(k_col_name) + 1
+                    # Verify baseline columns exist in session state master columns
+                    if k_pallet_col in st.session_state.df.columns:
+                        p_col_idx = st.session_state.df.columns.get_loc(k_pallet_col) + 1
                     else:
-                        st.error(f"Could not find column '{k_col_name}' in the main sheet.")
+                        st.error(f"Could not find column '{k_pallet_col}' in the main sheet.")
+                        st.stop()
+                        
+                    if k_square_col in st.session_state.df.columns:
+                        sq_col_idx = st.session_state.df.columns.get_loc(k_square_col) + 1
+                    else:
+                        st.error(f"Could not find column '{k_square_col}' in the main sheet.")
                         st.stop()
 
                     for _, row in received.iterrows():
+                        # Find matching material row in Google Sheet via unique Code
                         cell = main_sheet.find(str(row["Code"]))
-                        current_val = float(main_sheet.cell(cell.row, k_col_idx).value or 0)
-                        # Add the "Final Actual Order" amount to current stock
-                        new_val = current_val + float(row["Final_Actual_Order"])
-                        main_sheet.update_cell(cell.row, k_col_idx, new_val)
+                        
+                        # Gather baseline structural specs from main master dataframe 
+                        meta_df = st.session_state.df[st.session_state.df["Code"].astype(str).str.strip() == str(row["Code"]).strip()]
+                        if meta_df.empty:
+                            continue
+                        
+                        meta_row = meta_df.iloc[0]
+                        m2p = pd.to_numeric(meta_row.get("m_Square_per_pallet", 0), errors='coerce') or 0.0
+                        rp = pd.to_numeric(meta_row.get("Rolls_on_Pallet", 1), errors='coerce') or 1.0
+                        mat_name = str(meta_row.get("Material", ""))
+                        
+                        # Determine tracking unit type rule setup in threshold dictionaries
+                        unit_type = "Pallets"
+                        if mat_name in thresholds:
+                            unit_type = thresholds[mat_name].get('unit', 'Pallets')
+                        
+                        # Select appropriate tracking balance unit index destination
+                        target_col_idx = p_col_idx
+                        if unit_type == "Rolls" and k_roll_col in st.session_state.df.columns:
+                            target_col_idx = st.session_state.df.columns.get_loc(k_roll_col) + 1
+                        
+                        # 1. Calculate and update primary metrics (Pallets or Rolls)
+                        current_units = float(main_sheet.cell(cell.row, target_col_idx).value or 0)
+                        added_units = float(row["Final_Actual_Order"])
+                        new_units = current_units + added_units
+                        main_sheet.update_cell(cell.row, target_col_idx, new_units)
+                        
+                        # 2. Calculate and update complementary Square Meters (m²) automatically
+                        current_m2 = float(main_sheet.cell(cell.row, sq_col_idx).value or 0)
+                        added_m2 = added_units * (m2p if unit_type == "Pallets" else (m2p / rp))
+                        new_m2 = round(current_m2 + added_m2, 2)
+                        main_sheet.update_cell(cell.row, sq_col_idx, new_m2)
                     
-                    # Cleanup Pending list
+                    # Cleanup Pending list rows safely
                     remaining = receive_editor[receive_editor["Received?"] == False].drop(columns=["Received?"])
                     pending_sheet.clear()
                     pending_sheet.append_row(["Material", "Code", "Order_Qty", "Order_m2", "Final_Actual_Order", "Notes"])
                     if not remaining.empty:
                         pending_sheet.append_rows(remaining.values.tolist())
                     
-                    # 🔥 FIX: Clear the old cached data so it pulls the new June numbers from Google Sheets
+                    # Clear local dataframe state cache to reflect live update fields
                     if 'df' in st.session_state:
                         del st.session_state['df']
                     
-                    st.success("KPark stock updated successfully!")
+                    st.success("KPark stock units and square meters updated successfully!")
                     st.rerun()
         else:
             st.write("No pending orders currently in the system.")
             
     except Exception as e:
         st.error(f"Error accessing 'Pending_Orders' tab: {e}")
-        
+
 # --- MODE 4: PENDING ORDER DASHBOARD ---
 elif app_mode == "📋 View Pending Orders":
     st.title("📋 Current Pending Orders")
