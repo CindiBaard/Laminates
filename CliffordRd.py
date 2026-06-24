@@ -83,7 +83,13 @@ if app_mode == "📦 Stock Management":
     square_col = f"{selected_site}_SquareM {selected_month}"
 
     available_cols = [c for c in [roll_col, pallet_col, square_col] if c in st.session_state.df.columns]
-    display_cols = ["Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet"] + available_cols
+    
+    # 1. Prepare data frame for editing and introduce the 'Rolls Used' column
+    df_to_edit = st.session_state.df.copy()
+    df_to_edit["Rolls Used"] = 0.0  # Reset daily entry to 0 on load
+    
+    # Place 'Rolls Used' right after the master specs columns
+    display_cols = ["Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet", "Rolls Used"] + available_cols
 
     col_config = {
         "Material": st.column_config.TextColumn(pinned=True),
@@ -91,21 +97,30 @@ if app_mode == "📦 Stock Management":
         "Meters_per_Roll": st.column_config.NumberColumn(disabled=True),
         "Rolls_on_Pallet": st.column_config.NumberColumn(disabled=True),
         "m_Square_per_pallet": st.column_config.NumberColumn(disabled=True),
+        "Rolls Used": st.column_config.NumberColumn("Rolls Used (Daily)", min_value=0.0, step=1.0, format="%.0f"),
     }
     for col in available_cols:
         col_config[col] = st.column_config.NumberColumn(step=0.5, format="%.1f", disabled=("SquareM" in col))
 
-    edited_df = st.data_editor(st.session_state.df[display_cols], use_container_width=True, hide_index=True, column_config=col_config)
+    # Render the editor using our prepared DataFrame
+    edited_df = st.data_editor(df_to_edit[display_cols], use_container_width=True, hide_index=True, column_config=col_config)
 
-    # 1. Initialize logic variables
+    # Initialize logic variables
     reorder_needed = [] 
     low_stock_alerts = []
     total_est_weight_kg = 0.0
 
-    # 2. RUN THE CALCULATION LOOP (Restored and Corrected)
+    # 2. RUN THE CALCULATION LOOP & APPLY USAGE DEDUCTIONS
     for index, row in st.session_state.df.iterrows():
         mat_name = str(row["Material"]).strip()
         edited_row = edited_df.iloc[index]
+        
+        # Pull structural multipliers safely
+        m2p = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0.0
+        rp = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
+        
+        # Track usage deductions
+        rolls_used = float(edited_row.get("Rolls Used", 0.0))
         
         # Calculate Current Gross across all sites
         gross_val = 0
@@ -116,17 +131,30 @@ if app_mode == "📦 Stock Management":
             # Sum up the specific unit (Pallets or Rolls) across all sites
             for site in site_options:
                 c_name = f"{site}_{unit} {selected_month}"
+                
+                # Fetch baseline current value from the editor row
                 val = edited_row[c_name] if site == selected_site and c_name in edited_row else row.get(c_name, 0)
+                
+                # Apply live usage deduction to the selected site's metrics directly
+                if site == selected_site and rolls_used > 0:
+                    current_rolls = float(edited_row.get(roll_col, 0.0))
+                    
+                    # Deduct usage from current site totals
+                    if unit == "Rolls":
+                        # If this specific variant tracks stock by Rolls
+                        val = max(0.0, current_rolls - rolls_used)
+                    elif unit == "Pallets":
+                        # If tracking by Pallets, convert remaining rolls back into Pallets
+                        remaining_rolls = max(0.0, current_rolls - rolls_used)
+                        val = max(0.0, remaining_rolls / rp)
+                
                 try: gross_val += float(val)
                 except: pass
             
             # Check against threshold
             if gross_val < t['val']:
-                low_stock_alerts.append(f"🚨 **{mat_name}**: {gross_val} {unit} (Min: {t['val']})")
+                low_stock_alerts.append(f"🚨 **{mat_name}**: {gross_val:.1f} {unit} (Min: {t['val']})")
                 gap = max(0.0, float(t['target']) - float(gross_val))
-                
-                m2p = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0
-                rp = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1
                 
                 weight = gap * (WEIGHT_FACTORS["Pallet_Avg_KG"] if unit=="Pallets" else WEIGHT_FACTORS["Roll_Avg_KG"])
                 total_est_weight_kg += weight
@@ -144,99 +172,49 @@ if app_mode == "📦 Stock Management":
     c2.metric("Container Capacity", f"{(total_est_weight_kg/CONTAINER_LIMIT_KG)*100:.1f}%")
     with c3:
         if st.button("💾 Save Counts to Sheet"):
-            # ... (Your existing Save Counts logic) ...
-            # 🔥 FIX: Clear the old cached data so the app pulls fresh numbers on rerun
-            if 'df' in st.session_state:
-                del st.session_state['df']
-            st.success("Stock Updated!"); st.rerun()
+            try:
+                client = get_gspread_client()
+                main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+                
+                # Update our baseline local session state with the edited/deducted rows before committing
+                for idx, row in edited_df.iterrows():
+                    m_code = str(row["Code"]).strip()
+                    r_used = float(row.get("Rolls Used", 0.0))
+                    
+                    if r_used > 0:
+                        # Grab existing values from editor
+                        orig_rolls = float(row.get(roll_col, 0.0))
+                        rp_val = pd.to_numeric(st.session_state.df.iloc[idx]["Rolls_on_Pallet"], errors='coerce') or 1.0
+                        m2p_val = pd.to_numeric(st.session_state.df.iloc[idx]["m_Square_per_pallet"], errors='coerce') or 0.0
+                        
+                        # Process deductions
+                        new_rolls = max(0.0, orig_rolls - r_used)
+                        new_pallets = max(0.0, new_rolls / rp_val)
+                        new_square_m = round(new_pallets * m2p_val, 2)
+                        
+                        # Apply down to the temporary dataframe being saved
+                        edited_df.at[idx, roll_col] = new_rolls
+                        edited_df.at[idx, pallet_col] = new_pallets
+                        edited_df.at[idx, square_col] = new_square_m
+                
+                # Write back the calculated month metrics to Google Sheets
+                for col in available_cols:
+                    col_idx = st.session_state.df.columns.get_loc(col) + 1
+                    for idx, row in edited_df.iterrows():
+                        main_sheet.update_cell(idx + 2, col_idx, row[col]) # idx + 2 accounts for 1-based index and header
+                
+                # 🔥 FIX: Clear the old cached data so the app pulls fresh numbers on rerun
+                if 'df' in st.session_state:
+                    del st.session_state['df']
+                st.success("Stock and Daily Usage Deducted successfully!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Save failed: {e}")
 
     if low_stock_alerts:
         with st.expander("🚩 View Low Stock Flags", expanded=True):
             for alert in low_stock_alerts: st.write(alert)
-
-# --- 10. MANUAL OVERRIDE (Add non-low stock items) ---
-    st.divider()
-    st.subheader("📦 Additional/Manual Stock Order")
-    
-    col_sel, col_q, col_btn = st.columns([3, 1, 1])
-    with col_sel:
-        manual_item = st.selectbox("Search Stock Item", options=st.session_state.df['Material'].unique(), index=None, key="manual_sel")
-    with col_q:
-        # User enters quantity of Pallets here
-        manual_qty = st.number_input("Qty (Pallets)", min_value=0.0, step=1.0, key="manual_qty")
-    with col_btn:
-        st.write(" ") 
-        if st.button("➕ Add Item") and manual_item:
-            # 1. Get the full row data for this material to find its specs
-            mat_data = st.session_state.df.loc[st.session_state.df['Material'] == manual_item].iloc[0]
             
-            m_code = mat_data['Code']
-            
-            # 2. Calculate Square Meters
-            # We pull m_Square_per_pallet and ensure it's a number
-            m2_per_pallet = pd.to_numeric(mat_data["m_Square_per_pallet"], errors='coerce') or 0
-            calculated_m2 = round(manual_qty * m2_per_pallet, 2)
-            
-            state_key = f"proc_vFinal_{selected_site}_{selected_month}"
-            
-            # 3. Create the new row with the calculated m²
-            new_row = pd.DataFrame([{
-                "Material": manual_item, 
-                "Code": m_code,
-                "Order Qty": f"{manual_qty} Pallets (Manual)", 
-                "Order m²": calculated_m2, # <--- Automatically inserted
-                "Final Actual Order (Qty)": calculated_m2,
-                "Notes/Reason for Change": "Manual Order (Transport/Buffer)"
-            }])
-            
-            # 4. Update Session State
-            if state_key not in st.session_state:
-                st.session_state[state_key] = new_row
-            else:
-                st.session_state[state_key] = pd.concat([st.session_state[state_key], new_row], ignore_index=True)
-            
-            st.rerun()
-
-    # --- 11. FINAL PROCUREMENT CONFIRMATION ---
-    st.subheader("📝 Final Procurement Confirmation")
-    state_key = f"proc_vFinal_{selected_site}_{selected_month}"
-
-    if reorder_needed or (state_key in st.session_state):
-        if state_key not in st.session_state:
-            df_over = pd.DataFrame(reorder_needed)
-            df_over['Final Actual Order (Qty)'] = 0.0
-            df_over['Notes/Reason for Change'] = ""
-            st.session_state[state_key] = df_over
-
-        proc_editor = st.data_editor(
-            st.session_state[state_key],
-            column_config={
-                "Material": st.column_config.TextColumn(disabled=True),
-                "Code": st.column_config.TextColumn(disabled=True),
-                "Order Qty": st.column_config.TextColumn("Suggested", disabled=True),
-                "Order m²": st.column_config.NumberColumn("Sug. m²", disabled=True),
-                "Final Actual Order (Qty)": st.column_config.NumberColumn("Actual Order", min_value=0.0),
-                "Notes/Reason for Change": st.column_config.TextColumn("Reason for Change")
-            },
-            hide_index=True, use_container_width=True, key=f"editor_{state_key}"
-        )
-
-        if st.button("✅ Save Final Order to Pending List"):
-            try:
-                client = get_gspread_client()
-                pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
-                # Pre-process data: ensure it's in the correct column order for your Sheet
-                valid_orders = proc_editor[proc_editor['Final Actual Order (Qty)'] > 0]
-                if not valid_orders.empty:
-                    pending_sheet.append_rows(valid_orders.values.tolist())
-                    del st.session_state[state_key]
-                    st.success("Order added to Pending List!")
-                    st.rerun()
-                else:
-                    st.warning("Please enter at least one quantity.")
-            except Exception as e:
-                st.error(f"Error: {e}")
-
 # --- MODE 2: TRENDS ---
 elif app_mode == "📈 Stock Trends":
     st.title("📈 Stock Level Trends (Gross)")
