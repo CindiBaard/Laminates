@@ -86,6 +86,12 @@ if app_mode == "📦 Stock Management":
     
     # 1. Prepare data frame for editing and introduce the 'Rolls Used' column
     df_to_edit = st.session_state.df.copy()
+    
+    # 🔥 FIX: Explicitly cast target stock columns to float to handle fractional changes safely
+    for col in available_cols:
+        if col in df_to_edit.columns:
+            df_to_edit[col] = df_to_edit[col].astype(float)
+
     df_to_edit["Rolls Used"] = 0.0  # Reset daily entry to 0 on load
     
     # Place 'Rolls Used' right after the master specs columns
@@ -100,7 +106,7 @@ if app_mode == "📦 Stock Management":
         "Rolls Used": st.column_config.NumberColumn("Rolls Used (Daily)", min_value=0.0, step=1.0, format="%.0f"),
     }
     for col in available_cols:
-        col_config[col] = st.column_config.NumberColumn(step=0.5, format="%.1f", disabled=("SquareM" in col))
+        col_config[col] = st.column_config.NumberColumn(step=0.1, format="%.2f", disabled=("SquareM" in col))
 
     # Render the editor using our prepared DataFrame
     edited_df = st.data_editor(df_to_edit[display_cols], use_container_width=True, hide_index=True, column_config=col_config)
@@ -214,7 +220,7 @@ if app_mode == "📦 Stock Management":
     if low_stock_alerts:
         with st.expander("🚩 View Low Stock Flags", expanded=True):
             for alert in low_stock_alerts: st.write(alert)
-            
+
 # --- MODE 2: TRENDS ---
 elif app_mode == "📈 Stock Trends":
     st.title("📈 Stock Level Trends (Gross)")
