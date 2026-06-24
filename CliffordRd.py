@@ -112,7 +112,7 @@ if app_mode == "📦 Stock Management":
     low_stock_alerts = []
     total_est_weight_kg = 0.0
 
-    # 2. RUN THE CALCULATION LOOP & APPLY USAGE DEDUCTIONS
+    # 2. RUN THE CALCULATION LOOP & APPLY LIVE USAGE DEDUCTIONS FOR VISUAL ALERTS
     for index, row in st.session_state.df.iterrows():
         mat_name = str(row["Material"]).strip()
         edited_row = edited_df.iloc[index]
@@ -120,29 +120,56 @@ if app_mode == "📦 Stock Management":
         m2p = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0.0
         rp = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
         
-        rolls_used = float(edited_row.get("Rolls Used", 0.0))
-        
         gross_val = 0
         if mat_name in thresholds:
             t = thresholds[mat_name]
             unit = t['unit']
             
             for site in site_options:
-                c_name = f"{site}_{unit} {selected_month}"
-                val = edited_row[c_name] if site == selected_site and c_name in edited_row else row.get(c_name, 0)
+                # Fetch baseline current user modifications from the editor or the master frame
+                site_rolls_col = f"{site}_Rolls {selected_month}"
+                site_pallets_col = f"{site}_Pallets {selected_month}"
                 
-                if site == selected_site and rolls_used > 0:
-                    current_rolls = float(edited_row.get(roll_col, 0.0))
-                    if unit == "Rolls":
-                        val = max(0.0, current_rolls - rolls_used)
-                    elif unit == "Pallets":
-                        # If tracking threshold by pallets, check if rolls column handles the deduction
-                        remaining_rolls = max(0.0, current_rolls - rolls_used)
-                        val = max(0.0, remaining_rolls / rp)
+                s_rolls = edited_row[site_rolls_col] if site == selected_site and site_rolls_col in edited_row else row.get(site_rolls_col, 0.0)
+                s_pallets = edited_row[site_pallets_col] if site == selected_site and site_pallets_col in edited_row else row.get(site_pallets_col, 0.0)
                 
-                try: gross_val += float(val)
-                except: pass
+                try:
+                    s_rolls = float(s_rolls)
+                    s_pallets = float(s_pallets)
+                except:
+                    s_rolls, s_pallets = 0.0, 0.0
+
+                # If this is the current active site, apply live "Pallet Breaking" rules visually
+                if site == selected_site:
+                    r_used = float(edited_row.get("Rolls Used", 0.0))
+                    if r_used > 0:
+                        if s_rolls >= r_used:
+                            s_rolls -= r_used
+                        else:
+                            deficit = r_used - s_rolls
+                            s_rolls = 0.0
+                            pallets_to_break = int((deficit + rp - 0.001) // rp)
+                            if s_pallets >= pallets_to_break:
+                                s_pallets -= pallets_to_break
+                                s_rolls = (pallets_to_break * rp) - deficit
+                            else:
+                                s_pallets, s_rolls = 0.0, 0.0
+                    
+                    # Consolidate loose roll overflows into full pallets visually
+                    if s_rolls >= rp:
+                        extra_pallets = int(s_rolls // rp)
+                        s_pallets += extra_pallets
+                        s_rolls = s_rolls % rp
+
+                # Check if this material evaluates threshold flags via Rolls or Pallets unit rules
+                if unit == "Rolls":
+                    # Absolute total rolls including those wrapped up on pallets
+                    gross_val += s_rolls + (s_pallets * rp)
+                elif unit == "Pallets":
+                    # Total pallets including fractional values from loose rolls
+                    gross_val += s_pallets + (s_rolls / rp)
             
+            # Check calculated live metrics against threshold profiles
             if gross_val < t['val']:
                 low_stock_alerts.append(f"🚨 **{mat_name}**: {gross_val:.2f} {unit} (Min: {t['val']})")
                 gap = max(0.0, float(t['target']) - float(gross_val))
@@ -157,7 +184,7 @@ if app_mode == "📦 Stock Management":
                     "Order m²": round(gap * (m2p if unit=="Pallets" else m2p/rp), 2)
                 })
 
-# 3. Display Top Metrics
+    # 3. Display Top Metrics
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Order Weight", f"{total_est_weight_kg:,.0f} KG")
     c2.metric("Container Capacity", f"{(total_est_weight_kg/CONTAINER_LIMIT_KG)*100:.1f}%")
@@ -167,9 +194,7 @@ if app_mode == "📦 Stock Management":
                 client = get_gspread_client()
                 main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
                 
-                # 1. Loop through all rows to handle cascading inventory break-downs
                 for idx, row in edited_df.iterrows():
-                    # Read inputs safely as numbers
                     r_used = pd.to_numeric(row.get("Rolls Used", 0.0), errors='coerce') or 0.0
                     orig_rolls = pd.to_numeric(row.get(roll_col, 0.0), errors='coerce') or 0.0
                     orig_pallets = pd.to_numeric(row.get(pallet_col, 0.0), errors='coerce') or 0.0
@@ -178,71 +203,54 @@ if app_mode == "📦 Stock Management":
                     m2p_val = pd.to_numeric(st.session_state.df.iloc[idx]["m_Square_per_pallet"], errors='coerce') or 0.0
                     m2_per_roll = m2p_val / rp_val
                     
-                    # Track running totals for calculation processing
                     final_rolls = orig_rolls
                     final_pallets = orig_pallets
                     
                     if r_used > 0:
-                        # Step A: Deduct from existing loose rolls
                         if final_rolls >= r_used:
                             final_rolls -= r_used
                         else:
-                            # Step B: Deficit requires breaking full pallets
                             deficit = r_used - final_rolls
                             final_rolls = 0.0
-                            
-                            # Calculate how many full pallets we need to crack open
                             pallets_to_break = int((deficit + rp_val - 0.001) // rp_val)
                             
                             if final_pallets >= pallets_to_break:
                                 final_pallets -= pallets_to_break
-                                # Add the newly unboxed rolls back to inventory, then subtract remaining deficit
-                                total_unboxed_rolls = pallets_to_break * rp_val
-                                final_rolls = total_unboxed_rolls - deficit
+                                final_rolls = (pallets_to_break * rp_val) - deficit
                             else:
-                                # Out of stock scenario
-                                final_pallets = 0.0
-                                final_rolls = 0.0
+                                final_pallets, final_rolls = 0.0, 0.0
                     
-                    # 🔥 CRITICAL FIX: If user manually bumped loose rolls past a pallet size, group them up!
                     if final_rolls >= rp_val:
                         extra_pallets = int(final_rolls // rp_val)
                         final_pallets += extra_pallets
-                        final_rolls = final_rolls % rp_val  # Keep only the remaining loose remainder
+                        final_rolls = final_rolls % rp_val
                     
-                    # Compute absolute exact total physical m² left over in stock
-                    pallet_m2 = final_pallets * m2p_val
-                    rolls_m2 = final_rolls * m2_per_roll
-                    final_square_m = round(pallet_m2 + rolls_m2, 2)
+                    final_square_m = round((final_pallets * m2p_val) + (final_rolls * m2_per_roll), 2)
                     
-                    # Map structural adjustments onto the saving container
                     edited_df.at[idx, roll_col] = final_rolls
                     edited_df.at[idx, pallet_col] = final_pallets
                     edited_df.at[idx, square_col] = final_square_m
 
-                # 2. Package everything into a single bulk update batch array
                 cells_to_update = []
                 for col in available_cols:
                     col_idx = st.session_state.df.columns.get_loc(col) + 1
                     for idx, row in edited_df.iterrows():
                         row_idx = idx + 2
-                        cell_value = float(row[col])
-                        cell = gspread.cell.Cell(row=row_idx, col=col_idx, value=cell_value)
+                        cell = gspread.cell.Cell(row=row_idx, col=col_idx, value=float(row[col]))
                         cells_to_update.append(cell)
                 
-                # 3. Fire single API call
                 if cells_to_update:
                     main_sheet.update_cells(cells_to_update)
                 
                 if 'df' in st.session_state:
                     del st.session_state['df']
                     
-                st.success("Pallets broken down and loose roll overflows grouped successfully!")
+                st.success("Stock counts and Alerts updated successfully!")
                 st.rerun()
                 
             except Exception as e:
                 st.error(f"Save failed: {e}")
-                
+
     if low_stock_alerts:
         with st.expander("🚩 View Low Stock Flags", expanded=True):
             for alert in low_stock_alerts: st.write(alert)
