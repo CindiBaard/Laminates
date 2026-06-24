@@ -90,7 +90,6 @@ if app_mode == "📦 Stock Management":
         if col in df_to_edit.columns:
             df_to_edit[col] = df_to_edit[col].astype(float)
 
-    # 🔥 CHANGE: Set default to float 0.0 to enable fractional support
     df_to_edit["Rolls Used"] = 0.0  
     
     display_cols = ["Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet", "Rolls Used"] + available_cols
@@ -101,11 +100,9 @@ if app_mode == "📦 Stock Management":
         "Meters_per_Roll": st.column_config.NumberColumn(disabled=True),
         "Rolls_on_Pallet": st.column_config.NumberColumn(disabled=True),
         "m_Square_per_pallet": st.column_config.NumberColumn(disabled=True),
-        # 🔥 CHANGE: Changed step to 0.5 and format to allow decimals (e.g., 0.5, 1.5)
         "Rolls Used": st.column_config.NumberColumn("Rolls Used (Daily)", min_value=0.0, step=0.5, format="%.1f"),
     }
     for col in available_cols:
-        # Adjusted step to 0.01 and format to %.2f for precise decimal presentation
         col_config[col] = st.column_config.NumberColumn(step=0.01, format="%.2f", disabled=("SquareM" in col))
 
     edited_df = st.data_editor(df_to_edit[display_cols], use_container_width=True, hide_index=True, column_config=col_config)
@@ -123,7 +120,6 @@ if app_mode == "📦 Stock Management":
         m2p = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0.0
         rp = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
         
-        # Pull dynamic usage decimal
         rolls_used = float(edited_row.get("Rolls Used", 0.0))
         
         gross_val = 0
@@ -171,27 +167,23 @@ if app_mode == "📦 Stock Management":
                 main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
                 
                 for idx, row in edited_df.iterrows():
-                    m_code = str(row["Code"]).strip()
                     r_used = float(row.get("Rolls Used", 0.0))
                     
-                    if r_used > 0:
-                        orig_rolls = float(row.get(roll_col, 0.0))
-                        orig_square_m = float(row.get(square_col, 0.0))
-                        
-                        rp_val = pd.to_numeric(st.session_state.df.iloc[idx]["Rolls_on_Pallet"], errors='coerce') or 1.0
-                        m2p_val = pd.to_numeric(st.session_state.df.iloc[idx]["m_Square_per_pallet"], errors='coerce') or 0.0
-                        
-                        # 🔥 CALCULATION ADJUSTMENT: Deduct fractional m² based on per-roll area
-                        m2_per_roll = m2p_val / rp_val
-                        
-                        new_rolls = max(0.0, orig_rolls - r_used)
-                        new_pallets = max(0.0, new_rolls / rp_val)
-                        new_square_m = max(0.0, round(orig_square_m - (r_used * m2_per_roll), 2))
-                        
-                        # Set changes to temporary saving container
-                        edited_df.at[idx, roll_col] = new_rolls
-                        edited_df.at[idx, pallet_col] = new_pallets
-                        edited_df.at[idx, square_col] = new_square_m
+                    orig_rolls = float(row.get(roll_col, 0.0))
+                    rp_val = pd.to_numeric(st.session_state.df.iloc[idx]["Rolls_on_Pallet"], errors='coerce') or 1.0
+                    m2p_val = pd.to_numeric(st.session_state.df.iloc[idx]["m_Square_per_pallet"], errors='coerce') or 0.0
+                    
+                    # Determine updated rolls and pallets first
+                    new_rolls = max(0.0, orig_rolls - r_used)
+                    new_pallets = max(0.0, new_rolls / rp_val)
+                    
+                    # 🔥 THE FIX: Calculate total square meters based entirely on the total pallets in stock
+                    new_square_m = round(new_pallets * m2p_val, 2)
+                    
+                    # Update the temporary dataframe container before pushing to Google Sheets
+                    edited_df.at[idx, roll_col] = new_rolls
+                    edited_df.at[idx, pallet_col] = new_pallets
+                    edited_df.at[idx, square_col] = new_square_m
                 
                 # Commit updates upstream
                 for col in available_cols:
@@ -201,7 +193,7 @@ if app_mode == "📦 Stock Management":
                 
                 if 'df' in st.session_state:
                     del st.session_state['df']
-                st.success("Stock and Square Meters Updated Successfully!")
+                st.success("Stock and Total Square Meters Updated Successfully!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Save failed: {e}")
@@ -209,7 +201,7 @@ if app_mode == "📦 Stock Management":
     if low_stock_alerts:
         with st.expander("🚩 View Low Stock Flags", expanded=True):
             for alert in low_stock_alerts: st.write(alert)
-            
+
 # --- MODE 2: TRENDS ---
 elif app_mode == "📈 Stock Trends":
     st.title("📈 Stock Level Trends (Gross)")
