@@ -136,6 +136,7 @@ if app_mode == "📦 Stock Management":
                     if unit == "Rolls":
                         val = max(0.0, current_rolls - rolls_used)
                     elif unit == "Pallets":
+                        # If tracking threshold by pallets, check if rolls column handles the deduction
                         remaining_rolls = max(0.0, current_rolls - rolls_used)
                         val = max(0.0, remaining_rolls / rp)
                 
@@ -170,19 +171,27 @@ if app_mode == "📦 Stock Management":
                     r_used = float(row.get("Rolls Used", 0.0))
                     
                     orig_rolls = float(row.get(roll_col, 0.0))
+                    orig_pallets = float(row.get(pallet_col, 0.0))
+                    
                     rp_val = pd.to_numeric(st.session_state.df.iloc[idx]["Rolls_on_Pallet"], errors='coerce') or 1.0
                     m2p_val = pd.to_numeric(st.session_state.df.iloc[idx]["m_Square_per_pallet"], errors='coerce') or 0.0
                     
-                    # Determine updated rolls and pallets first
+                    # Deduct the daily usage from the rolls counter
                     new_rolls = max(0.0, orig_rolls - r_used)
-                    new_pallets = max(0.0, new_rolls / rp_val)
                     
-                    # 🔥 THE FIX: Calculate total square meters based entirely on the total pallets in stock
-                    new_square_m = round(new_pallets * m2p_val, 2)
+                    # Scenario A: If your 'Rolls' column tracks ALL rolls (palletized + loose combined)
+                    # new_pallets = max(0.0, new_rolls / rp_val)
+                    # new_square_m = round(new_pallets * m2p_val, 2)
                     
-                    # Update the temporary dataframe container before pushing to Google Sheets
+                    # Scenario B: If 'Pallets' tracks full bundles and 'Rolls' tracks independent loose stock:
+                    m2_per_roll = m2p_val / rp_val
+                    pallet_m2 = orig_pallets * m2p_val
+                    rolls_m2 = new_rolls * m2_per_roll
+                    new_square_m = round(pallet_m2 + rolls_m2, 2)
+                    
+                    # Save local tracking changes
                     edited_df.at[idx, roll_col] = new_rolls
-                    edited_df.at[idx, pallet_col] = new_pallets
+                    # edited_df.at[idx, pallet_col] = new_pallets # Uncomment if Pallets should auto-calculate from Rolls
                     edited_df.at[idx, square_col] = new_square_m
                 
                 # Commit updates upstream
