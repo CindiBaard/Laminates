@@ -84,17 +84,15 @@ if app_mode == "📦 Stock Management":
 
     available_cols = [c for c in [roll_col, pallet_col, square_col] if c in st.session_state.df.columns]
     
-    # 1. Prepare data frame for editing and introduce the 'Rolls Used' column
+    # 1. Prepare dataframe and explicitly cast stock columns to float
     df_to_edit = st.session_state.df.copy()
-    
-    # 🔥 FIX: Explicitly cast target stock columns to float to handle fractional changes safely
     for col in available_cols:
         if col in df_to_edit.columns:
             df_to_edit[col] = df_to_edit[col].astype(float)
 
-    df_to_edit["Rolls Used"] = 0.0  # Reset daily entry to 0 on load
+    # 🔥 CHANGE: Set default to float 0.0 to enable fractional support
+    df_to_edit["Rolls Used"] = 0.0  
     
-    # Place 'Rolls Used' right after the master specs columns
     display_cols = ["Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet", "Rolls Used"] + available_cols
 
     col_config = {
@@ -103,12 +101,13 @@ if app_mode == "📦 Stock Management":
         "Meters_per_Roll": st.column_config.NumberColumn(disabled=True),
         "Rolls_on_Pallet": st.column_config.NumberColumn(disabled=True),
         "m_Square_per_pallet": st.column_config.NumberColumn(disabled=True),
-        "Rolls Used": st.column_config.NumberColumn("Rolls Used (Daily)", min_value=0.0, step=1.0, format="%.0f"),
+        # 🔥 CHANGE: Changed step to 0.5 and format to allow decimals (e.g., 0.5, 1.5)
+        "Rolls Used": st.column_config.NumberColumn("Rolls Used (Daily)", min_value=0.0, step=0.5, format="%.1f"),
     }
     for col in available_cols:
-        col_config[col] = st.column_config.NumberColumn(step=0.1, format="%.2f", disabled=("SquareM" in col))
+        # Adjusted step to 0.01 and format to %.2f for precise decimal presentation
+        col_config[col] = st.column_config.NumberColumn(step=0.01, format="%.2f", disabled=("SquareM" in col))
 
-    # Render the editor using our prepared DataFrame
     edited_df = st.data_editor(df_to_edit[display_cols], use_container_width=True, hide_index=True, column_config=col_config)
 
     # Initialize logic variables
@@ -121,45 +120,34 @@ if app_mode == "📦 Stock Management":
         mat_name = str(row["Material"]).strip()
         edited_row = edited_df.iloc[index]
         
-        # Pull structural multipliers safely
         m2p = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0.0
         rp = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
         
-        # Track usage deductions
+        # Pull dynamic usage decimal
         rolls_used = float(edited_row.get("Rolls Used", 0.0))
         
-        # Calculate Current Gross across all sites
         gross_val = 0
         if mat_name in thresholds:
             t = thresholds[mat_name]
             unit = t['unit']
             
-            # Sum up the specific unit (Pallets or Rolls) across all sites
             for site in site_options:
                 c_name = f"{site}_{unit} {selected_month}"
-                
-                # Fetch baseline current value from the editor row
                 val = edited_row[c_name] if site == selected_site and c_name in edited_row else row.get(c_name, 0)
                 
-                # Apply live usage deduction to the selected site's metrics directly
                 if site == selected_site and rolls_used > 0:
                     current_rolls = float(edited_row.get(roll_col, 0.0))
-                    
-                    # Deduct usage from current site totals
                     if unit == "Rolls":
-                        # If this specific variant tracks stock by Rolls
                         val = max(0.0, current_rolls - rolls_used)
                     elif unit == "Pallets":
-                        # If tracking by Pallets, convert remaining rolls back into Pallets
                         remaining_rolls = max(0.0, current_rolls - rolls_used)
                         val = max(0.0, remaining_rolls / rp)
                 
                 try: gross_val += float(val)
                 except: pass
             
-            # Check against threshold
             if gross_val < t['val']:
-                low_stock_alerts.append(f"🚨 **{mat_name}**: {gross_val:.1f} {unit} (Min: {t['val']})")
+                low_stock_alerts.append(f"🚨 **{mat_name}**: {gross_val:.2f} {unit} (Min: {t['val']})")
                 gap = max(0.0, float(t['target']) - float(gross_val))
                 
                 weight = gap * (WEIGHT_FACTORS["Pallet_Avg_KG"] if unit=="Pallets" else WEIGHT_FACTORS["Roll_Avg_KG"])
@@ -168,7 +156,7 @@ if app_mode == "📦 Stock Management":
                 reorder_needed.append({
                     "Material": mat_name, 
                     "Code": row["Code"],
-                    "Order Qty": f"{gap:.1f} {unit}",
+                    "Order Qty": f"{gap:.2f} {unit}",
                     "Order m²": round(gap * (m2p if unit=="Pallets" else m2p/rp), 2)
                 })
 
@@ -182,37 +170,38 @@ if app_mode == "📦 Stock Management":
                 client = get_gspread_client()
                 main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
                 
-                # Update our baseline local session state with the edited/deducted rows before committing
                 for idx, row in edited_df.iterrows():
                     m_code = str(row["Code"]).strip()
                     r_used = float(row.get("Rolls Used", 0.0))
                     
                     if r_used > 0:
-                        # Grab existing values from editor
                         orig_rolls = float(row.get(roll_col, 0.0))
+                        orig_square_m = float(row.get(square_col, 0.0))
+                        
                         rp_val = pd.to_numeric(st.session_state.df.iloc[idx]["Rolls_on_Pallet"], errors='coerce') or 1.0
                         m2p_val = pd.to_numeric(st.session_state.df.iloc[idx]["m_Square_per_pallet"], errors='coerce') or 0.0
                         
-                        # Process deductions
+                        # 🔥 CALCULATION ADJUSTMENT: Deduct fractional m² based on per-roll area
+                        m2_per_roll = m2p_val / rp_val
+                        
                         new_rolls = max(0.0, orig_rolls - r_used)
                         new_pallets = max(0.0, new_rolls / rp_val)
-                        new_square_m = round(new_pallets * m2p_val, 2)
+                        new_square_m = max(0.0, round(orig_square_m - (r_used * m2_per_roll), 2))
                         
-                        # Apply down to the temporary dataframe being saved
+                        # Set changes to temporary saving container
                         edited_df.at[idx, roll_col] = new_rolls
                         edited_df.at[idx, pallet_col] = new_pallets
                         edited_df.at[idx, square_col] = new_square_m
                 
-                # Write back the calculated month metrics to Google Sheets
+                # Commit updates upstream
                 for col in available_cols:
                     col_idx = st.session_state.df.columns.get_loc(col) + 1
                     for idx, row in edited_df.iterrows():
-                        main_sheet.update_cell(idx + 2, col_idx, row[col]) # idx + 2 accounts for 1-based index and header
+                        main_sheet.update_cell(idx + 2, col_idx, float(row[col]))
                 
-                # 🔥 FIX: Clear the old cached data so the app pulls fresh numbers on rerun
                 if 'df' in st.session_state:
                     del st.session_state['df']
-                st.success("Stock and Daily Usage Deducted successfully!")
+                st.success("Stock and Square Meters Updated Successfully!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Save failed: {e}")
@@ -220,7 +209,7 @@ if app_mode == "📦 Stock Management":
     if low_stock_alerts:
         with st.expander("🚩 View Low Stock Flags", expanded=True):
             for alert in low_stock_alerts: st.write(alert)
-
+            
 # --- MODE 2: TRENDS ---
 elif app_mode == "📈 Stock Trends":
     st.title("📈 Stock Level Trends (Gross)")
