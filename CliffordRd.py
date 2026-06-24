@@ -167,52 +167,55 @@ if app_mode == "📦 Stock Management":
                 client = get_gspread_client()
                 main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
                 
-                # 1. Update your local edited_df copy with the math logic first
+                # 1. Loop through all rows to apply usage deductions AND compute fresh m²
                 for idx, row in edited_df.iterrows():
-                    r_used = float(row.get("Rolls Used", 0.0))
+                    # Safely convert all inputs to float numbers to avoid data type mismatches
+                    r_used = pd.to_numeric(row.get("Rolls Used", 0.0), errors='coerce') or 0.0
+                    orig_rolls = pd.to_numeric(row.get(roll_col, 0.0), errors='coerce') or 0.0
+                    orig_pallets = pd.to_numeric(row.get(pallet_col, 0.0), errors='coerce') or 0.0
                     
-                    if r_used > 0:
-                        orig_rolls = float(row.get(roll_col, 0.0))
-                        orig_pallets = float(row.get(pallet_col, 0.0))
-                        
-                        rp_val = pd.to_numeric(st.session_state.df.iloc[idx]["Rolls_on_Pallet"], errors='coerce') or 1.0
-                        m2p_val = pd.to_numeric(st.session_state.df.iloc[idx]["m_Square_per_pallet"], errors='coerce') or 0.0
-                        
-                        m2_per_roll = m2p_val / rp_val
-                        
-                        new_rolls = max(0.0, orig_rolls - r_used)
-                        rolls_m2 = new_rolls * m2_per_roll
-                        pallet_m2 = orig_pallets * m2p_val
-                        new_square_m = round(pallet_m2 + rolls_m2, 2)
-                        
-                        edited_df.at[idx, roll_col] = new_rolls
-                        edited_df.at[idx, square_col] = new_square_m
+                    rp_val = pd.to_numeric(st.session_state.df.iloc[idx]["Rolls_on_Pallet"], errors='coerce') or 1.0
+                    m2p_val = pd.to_numeric(st.session_state.df.iloc[idx]["m_Square_per_pallet"], errors='coerce') or 0.0
+                    
+                    # Deduct usage from the rolls tracker if user typed anything
+                    new_rolls = max(0.0, orig_rolls - r_used)
+                    
+                    # Calculate total square meters based on BOTH parts independently:
+                    # (Full Pallets * m² per Pallet) + (Loose Rolls * m² per Roll)
+                    m2_per_roll = m2p_val / rp_val
+                    pallet_m2 = orig_pallets * m2p_val
+                    rolls_m2 = new_rolls * m2_per_roll
+                    new_square_m = round(pallet_m2 + rolls_m2, 2)
+                    
+                    # Update our local edited dataframe with the freshly derived variables
+                    edited_df.at[idx, roll_col] = new_rolls
+                    edited_df.at[idx, square_col] = new_square_m
 
-                # 🔥 THE FIX: Collect cells into a list and update everything in ONE API CALL
+                # 2. Collect all modified cells into a single payload array
                 cells_to_update = []
-                
                 for col in available_cols:
                     col_idx = st.session_state.df.columns.get_loc(col) + 1
                     for idx, row in edited_df.iterrows():
-                        row_idx = idx + 2  # +2 accounts for 1-based index and header row
+                        row_idx = idx + 2  # account for 1-based index and sheet header
                         
-                        # Fetch the cell object from gspread locally
-                        cell = gspread.cell.Cell(row=row_idx, col=col_idx, value=float(row[col]))
+                        # Convert value to native python float right before staging
+                        cell_value = float(row[col])
+                        cell = gspread.cell.Cell(row=row_idx, col=col_idx, value=cell_value)
                         cells_to_update.append(cell)
                 
-                # Execute batch update (Only 1 API Write Call used!)
+                # 3. Fire the bulk patch request to Google
                 if cells_to_update:
                     main_sheet.update_cells(cells_to_update)
                 
+                # Wipe cache memory to pull the clean calculations on refresh
                 if 'df' in st.session_state:
                     del st.session_state['df']
                     
-                st.success("Stock and Total Square Meters Updated Successfully via Batch Update!")
+                st.success("Stock counts and Square Meters updated successfully!")
                 st.rerun()
                 
             except Exception as e:
                 st.error(f"Save failed: {e}")
-
     if low_stock_alerts:
         with st.expander("🚩 View Low Stock Flags", expanded=True):
             for alert in low_stock_alerts: st.write(alert)
