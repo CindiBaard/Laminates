@@ -157,7 +157,7 @@ if app_mode == "📦 Stock Management":
                     "Order m²": round(gap * (m2p if unit=="Pallets" else m2p/rp), 2)
                 })
 
-    # 3. Display Top Metrics
+# 3. Display Top Metrics
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Order Weight", f"{total_est_weight_kg:,.0f} KG")
     c2.metric("Container Capacity", f"{(total_est_weight_kg/CONTAINER_LIMIT_KG)*100:.1f}%")
@@ -167,55 +167,82 @@ if app_mode == "📦 Stock Management":
                 client = get_gspread_client()
                 main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
                 
-                # 1. Loop through all rows to apply usage deductions AND compute fresh m²
+                # 1. Loop through all rows to handle cascading inventory break-downs
                 for idx, row in edited_df.iterrows():
-                    # Safely convert all inputs to float numbers to avoid data type mismatches
+                    # Read inputs safely as numbers
                     r_used = pd.to_numeric(row.get("Rolls Used", 0.0), errors='coerce') or 0.0
                     orig_rolls = pd.to_numeric(row.get(roll_col, 0.0), errors='coerce') or 0.0
                     orig_pallets = pd.to_numeric(row.get(pallet_col, 0.0), errors='coerce') or 0.0
                     
                     rp_val = pd.to_numeric(st.session_state.df.iloc[idx]["Rolls_on_Pallet"], errors='coerce') or 1.0
                     m2p_val = pd.to_numeric(st.session_state.df.iloc[idx]["m_Square_per_pallet"], errors='coerce') or 0.0
-                    
-                    # Deduct usage from the rolls tracker if user typed anything
-                    new_rolls = max(0.0, orig_rolls - r_used)
-                    
-                    # Calculate total square meters based on BOTH parts independently:
-                    # (Full Pallets * m² per Pallet) + (Loose Rolls * m² per Roll)
                     m2_per_roll = m2p_val / rp_val
-                    pallet_m2 = orig_pallets * m2p_val
-                    rolls_m2 = new_rolls * m2_per_roll
-                    new_square_m = round(pallet_m2 + rolls_m2, 2)
                     
-                    # Update our local edited dataframe with the freshly derived variables
-                    edited_df.at[idx, roll_col] = new_rolls
-                    edited_df.at[idx, square_col] = new_square_m
+                    # Track running totals for calculation processing
+                    final_rolls = orig_rolls
+                    final_pallets = orig_pallets
+                    
+                    if r_used > 0:
+                        # Step A: Deduct from existing loose rolls
+                        if final_rolls >= r_used:
+                            final_rolls -= r_used
+                        else:
+                            # Step B: Deficit requires breaking full pallets
+                            deficit = r_used - final_rolls
+                            final_rolls = 0.0
+                            
+                            # Calculate how many full pallets we need to crack open
+                            pallets_to_break = int((deficit + rp_val - 0.001) // rp_val)
+                            
+                            if final_pallets >= pallets_to_break:
+                                final_pallets -= pallets_to_break
+                                # Add the newly unboxed rolls back to inventory, then subtract remaining deficit
+                                total_unboxed_rolls = pallets_to_break * rp_val
+                                final_rolls = total_unboxed_rolls - deficit
+                            else:
+                                # Out of stock scenario
+                                final_pallets = 0.0
+                                final_rolls = 0.0
+                    
+                    # 🔥 CRITICAL FIX: If user manually bumped loose rolls past a pallet size, group them up!
+                    if final_rolls >= rp_val:
+                        extra_pallets = int(final_rolls // rp_val)
+                        final_pallets += extra_pallets
+                        final_rolls = final_rolls % rp_val  # Keep only the remaining loose remainder
+                    
+                    # Compute absolute exact total physical m² left over in stock
+                    pallet_m2 = final_pallets * m2p_val
+                    rolls_m2 = final_rolls * m2_per_roll
+                    final_square_m = round(pallet_m2 + rolls_m2, 2)
+                    
+                    # Map structural adjustments onto the saving container
+                    edited_df.at[idx, roll_col] = final_rolls
+                    edited_df.at[idx, pallet_col] = final_pallets
+                    edited_df.at[idx, square_col] = final_square_m
 
-                # 2. Collect all modified cells into a single payload array
+                # 2. Package everything into a single bulk update batch array
                 cells_to_update = []
                 for col in available_cols:
                     col_idx = st.session_state.df.columns.get_loc(col) + 1
                     for idx, row in edited_df.iterrows():
-                        row_idx = idx + 2  # account for 1-based index and sheet header
-                        
-                        # Convert value to native python float right before staging
+                        row_idx = idx + 2
                         cell_value = float(row[col])
                         cell = gspread.cell.Cell(row=row_idx, col=col_idx, value=cell_value)
                         cells_to_update.append(cell)
                 
-                # 3. Fire the bulk patch request to Google
+                # 3. Fire single API call
                 if cells_to_update:
                     main_sheet.update_cells(cells_to_update)
                 
-                # Wipe cache memory to pull the clean calculations on refresh
                 if 'df' in st.session_state:
                     del st.session_state['df']
                     
-                st.success("Stock counts and Square Meters updated successfully!")
+                st.success("Pallets broken down and loose roll overflows grouped successfully!")
                 st.rerun()
                 
             except Exception as e:
                 st.error(f"Save failed: {e}")
+                
     if low_stock_alerts:
         with st.expander("🚩 View Low Stock Flags", expanded=True):
             for alert in low_stock_alerts: st.write(alert)
