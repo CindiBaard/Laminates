@@ -544,7 +544,7 @@ elif app_mode == "🚛 Receive Goods (KPark)":
             p_col = "Pending_Pallets"
             r_col = "Pending_Rolls"
             m2_col = "Pending_m2"
-            act_col = "Final_Actual_Order"
+            act_col = "Total Weight (KG)"
             
             if p_col in pending_df.columns:
                 pending_df[p_col] = safe_extract_numeric(pending_df[p_col])
