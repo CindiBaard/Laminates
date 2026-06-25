@@ -344,7 +344,7 @@ if app_mode == "📦 Stock Management":
                         input_pallets,
                         input_rolls,
                         input_m2,
-                        input_weight, # Writing total KG directly into the 'Final_Actual_Order' sheet column
+                        input_weight, # Writing total KG directly into the 'Total Weight (KG)' sheet column
                         input_notes
                     ]
                     
@@ -597,7 +597,7 @@ elif app_mode == "🚛 Receive Goods (KPark)":
                     # Cleanup Pending list
                     remaining = receive_editor[receive_editor["Received?"] == False].drop(columns=["Received?"])
                     pending_sheet.clear()
-                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Final_Actual_Order", "Notes"])
+                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Total Weight (KG)", "Notes"])
                     if not remaining.empty:
                         pending_sheet.append_rows(remaining.values.tolist())
                     
@@ -625,7 +625,7 @@ elif app_mode == "📋 View Pending Orders":
             p_col = "Pending_Pallets"
             r_col = "Pending_Rolls"
             m2_col = "Pending_m2"
-            act_col = "Final_Actual_Order"
+            act_col = "Total Weight (KG)"
             
             # Harmonize column names between Notes and OrderNotes
             if "OrderNotes" in df_pending.columns:
@@ -671,7 +671,7 @@ elif app_mode == "📋 View Pending Orders":
                     "Pending_Pallets": st.column_config.NumberColumn("Pending_Pallets", format="%.1f", disabled=True),
                     "Pending_Rolls": st.column_config.NumberColumn("Pending_Rolls", format="%.1f", disabled=True),
                     "Pending_m2": st.column_config.NumberColumn("Pending_m2", format="%.2f", disabled=True),
-                    "Final_Actual_Order": st.column_config.NumberColumn("Total Weight (KG)", format="%.1f", disabled=True),
+                    "Total Weight (KG)": st.column_config.NumberColumn("Total Weight (KG)", format="%.1f", disabled=True),
                     "Notes": st.column_config.TextColumn("Notes", width="medium", disabled=True)
                 },
                 hide_index=True,
@@ -686,7 +686,7 @@ elif app_mode == "📋 View Pending Orders":
                 if st.button("🗑️ Delete Selected", type="secondary"):
                     to_keep = edited_pending[edited_pending["Select to Delete"] == False].drop(columns=["Select to Delete"])
                     pending_sheet.clear()
-                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Final_Actual_Order", "Notes"])
+                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Total Weight (KG)", "Notes"])
                     
                     if not to_keep.empty:
                         pending_sheet.append_rows(to_keep.values.tolist())
