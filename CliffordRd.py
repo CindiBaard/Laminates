@@ -76,6 +76,7 @@ thresholds = {
     "JUMBO ROLLS Silver": {"val": 1, "target": 2, "unit": "Pallets"}
 }
 
+
 # --- MODE 1: STOCK MANAGEMENT ---
 if app_mode == "📦 Stock Management":
     st.title(f"📦 {selected_site} - {selected_month} Management")
@@ -85,7 +86,16 @@ if app_mode == "📦 Stock Management":
     square_col = f"{selected_site}_SquareM {selected_month}"
 
     available_cols = [c for c in [roll_col, pallet_col, square_col] if c in st.session_state.df.columns]
-    display_cols = ["Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet"] + available_cols
+    
+    # 1. Prepare dataframe and explicitly cast stock columns to float
+    df_to_edit = st.session_state.df.copy()
+    for col in available_cols:
+        if col in df_to_edit.columns:
+            df_to_edit[col] = df_to_edit[col].astype(float)
+
+    df_to_edit["Rolls Used"] = 0.0  
+    
+    display_cols = ["Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet", "Rolls Used"] + available_cols
 
     col_config = {
         "Material": st.column_config.TextColumn(pinned=True),
@@ -93,154 +103,163 @@ if app_mode == "📦 Stock Management":
         "Meters_per_Roll": st.column_config.NumberColumn(disabled=True),
         "Rolls_on_Pallet": st.column_config.NumberColumn(disabled=True),
         "m_Square_per_pallet": st.column_config.NumberColumn(disabled=True),
+        "Rolls Used": st.column_config.NumberColumn("Rolls Used (Daily)", min_value=0.0, step=0.5, format="%.1f"),
     }
     for col in available_cols:
-        col_config[col] = st.column_config.NumberColumn(step=0.5, format="%.1f", disabled=("SquareM" in col))
+        col_config[col] = st.column_config.NumberColumn(step=0.01, format="%.2f", disabled=("SquareM" in col))
 
-    edited_df = st.data_editor(st.session_state.df[display_cols], use_container_width=True, hide_index=True, column_config=col_config)
+    edited_df = st.data_editor(df_to_edit[display_cols], use_container_width=True, hide_index=True, column_config=col_config)
 
-    # REORDER & ALERT LOGIC
-    summary_list, low_stock_alerts, reorder_needed = [], [], []
+    # Initialize logic variables
+    reorder_needed = [] 
+    low_stock_alerts = []
     total_est_weight_kg = 0.0
 
+    # 2. RUN THE CALCULATION LOOP & APPLY LIVE USAGE DEDUCTIONS FOR VISUAL ALERTS
     for index, row in st.session_state.df.iterrows():
         mat_name = str(row["Material"]).strip()
-        mat_sum = {"Material": mat_name, "Code": row["Code"]}
         edited_row = edited_df.iloc[index]
         
-        # Calculate Gross across all sites
-        for metric in ["Rolls", "Pallets", "SquareM"]:
-            total = 0
-            for site in site_options:
-                c_name = f"{site}_{metric} {selected_month}"
-                val = edited_row[c_name] if site == selected_site and c_name in edited_row else row.get(c_name, 0)
-                try: 
-                    total += float(str(val).replace(',', '').strip()) if str(val).strip() != "" else 0
-                except: 
-                    pass
-            mat_sum[f"Gross {metric}"] = total
+        m2p = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0.0
+        rp = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
         
-        # Threshold Checks
+        gross_val = 0
         if mat_name in thresholds:
             t = thresholds[mat_name]
-            cur = mat_sum[f"Gross {t['unit']}"]
-            if cur < t['val']:
-                low_stock_alerts.append(f"🚨 **{mat_name}**: {cur} {t['unit']} (Min: {t['val']})")
-                gap = max(0.0, float(t['target']) - float(cur))
-                m2p = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0
-                rp = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1
+            unit = t['unit']
+            
+            for site in site_options:
+                # Fetch baseline current user modifications from the editor or the master frame
+                site_rolls_col = f"{site}_Rolls {selected_month}"
+                site_pallets_col = f"{site}_Pallets {selected_month}"
                 
-                weight = gap * (WEIGHT_FACTORS["Pallet_Avg_KG"] if t['unit']=="Pallets" else WEIGHT_FACTORS["Roll_Avg_KG"])
+                s_rolls = edited_row[site_rolls_col] if site == selected_site and site_rolls_col in edited_row else row.get(site_rolls_col, 0.0)
+                s_pallets = edited_row[site_pallets_col] if site == selected_site and site_pallets_col in edited_row else row.get(site_pallets_col, 0.0)
+                
+                try:
+                    s_rolls = float(s_rolls)
+                    s_pallets = float(s_pallets)
+                except:
+                    s_rolls, s_pallets = 0.0, 0.0
+
+                # If this is the current active site, apply live "Pallet Breaking" rules visually
+                if site == selected_site:
+                    r_used = float(edited_row.get("Rolls Used", 0.0))
+                    if r_used > 0:
+                        if s_rolls >= r_used:
+                            s_rolls -= r_used
+                        else:
+                            deficit = r_used - s_rolls
+                            s_rolls = 0.0
+                            pallets_to_break = int((deficit + rp - 0.001) // rp)
+                            if s_pallets >= pallets_to_break:
+                                s_pallets -= pallets_to_break
+                                s_rolls = (pallets_to_break * rp) - deficit
+                            else:
+                                s_pallets, s_rolls = 0.0, 0.0
+                    
+                    # Consolidate loose roll overflows into full pallets visually
+                    if s_rolls >= rp:
+                        extra_pallets = int(s_rolls // rp)
+                        s_pallets += extra_pallets
+                        s_rolls = s_rolls % rp
+
+                # Check if this material evaluates threshold flags via Rolls or Pallets unit rules
+                if unit == "Rolls":
+                    # Absolute total rolls including those wrapped up on pallets
+                    gross_val += s_rolls + (s_pallets * rp)
+                elif unit == "Pallets":
+                    # Total pallets including fractional values from loose rolls
+                    gross_val += s_pallets + (s_rolls / rp)
+            
+            # Check calculated live metrics against threshold profiles
+            if gross_val < t['val']:
+                low_stock_alerts.append(f"🚨 **{mat_name}**: {gross_val:.2f} {unit} (Min: {t['val']})")
+                gap = max(0.0, float(t['target']) - float(gross_val))
+                
+                weight = gap * (WEIGHT_FACTORS["Pallet_Avg_KG"] if unit=="Pallets" else WEIGHT_FACTORS["Roll_Avg_KG"])
                 total_est_weight_kg += weight
                 
                 reorder_needed.append({
                     "Material": mat_name, 
                     "Code": row["Code"],
-                    "Suggested Order": f"{gap:.1f} {t['unit']}",
-                    "Sug_Qty": gap,
-                    "Unit_Type": t['unit'],
-                    "m2_Per_Pallet": m2p,
-                    "Rolls_on_Pallet": rp
+                    "Order Qty": f"{gap:.2f} {unit}",
+                    "Order m²": round(gap * (m2p if unit=="Pallets" else m2p/rp), 2)
                 })
-        summary_list.append(mat_sum)
 
+    # 3. Display Top Metrics
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Order Weight", f"{total_est_weight_kg:,.0f} KG")
     c2.metric("Container Capacity", f"{(total_est_weight_kg/CONTAINER_LIMIT_KG)*100:.1f}%")
-    
     with c3:
         if st.button("💾 Save Counts to Sheet"):
-            client = get_gspread_client()
-            sheet = client.open_by_key(SPREADSHEET_ID).sheet1
-            updates = []
-            
-            for idx, row in edited_df.iterrows():
-                real_idx = st.session_state.df.index[idx] 
-                r_p = pd.to_numeric(st.session_state.df.at[real_idx, "Rolls_on_Pallet"], errors='coerce') or 1
-                m_p = pd.to_numeric(st.session_state.df.at[real_idx, "m_Square_per_pallet"], errors='coerce') or 0
+            try:
+                client = get_gspread_client()
+                main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
                 
-                m2 = round((row[pallet_col] * m_p) + (row[roll_col] * (m_p / r_p)), 2)
+                for idx, row in edited_df.iterrows():
+                    r_used = pd.to_numeric(row.get("Rolls Used", 0.0), errors='coerce') or 0.0
+                    orig_rolls = pd.to_numeric(row.get(roll_col, 0.0), errors='coerce') or 0.0
+                    orig_pallets = pd.to_numeric(row.get(pallet_col, 0.0), errors='coerce') or 0.0
+                    
+                    rp_val = pd.to_numeric(st.session_state.df.iloc[idx]["Rolls_on_Pallet"], errors='coerce') or 1.0
+                    m2p_val = pd.to_numeric(st.session_state.df.iloc[idx]["m_Square_per_pallet"], errors='coerce') or 0.0
+                    m2_per_roll = m2p_val / rp_val
+                    
+                    final_rolls = orig_rolls
+                    final_pallets = orig_pallets
+                    
+                    if r_used > 0:
+                        if final_rolls >= r_used:
+                            final_rolls -= r_used
+                        else:
+                            deficit = r_used - final_rolls
+                            final_rolls = 0.0
+                            pallets_to_break = int((deficit + rp_val - 0.001) // rp_val)
+                            
+                            if final_pallets >= pallets_to_break:
+                                final_pallets -= pallets_to_break
+                                final_rolls = (pallets_to_break * rp_val) - deficit
+                            else:
+                                final_pallets, final_rolls = 0.0, 0.0
+                    
+                    if final_rolls >= rp_val:
+                        extra_pallets = int(final_rolls // rp_val)
+                        final_pallets += extra_pallets
+                        final_rolls = final_rolls % rp_val
+                    
+                    final_square_m = round((final_pallets * m2p_val) + (final_rolls * m2_per_roll), 2)
+                    
+                    edited_df.at[idx, roll_col] = final_rolls
+                    edited_df.at[idx, pallet_col] = final_pallets
+                    edited_df.at[idx, square_col] = final_square_m
+
+                cells_to_update = []
+                for col in available_cols:
+                    col_idx = st.session_state.df.columns.get_loc(col) + 1
+                    for idx, row in edited_df.iterrows():
+                        row_idx = idx + 2
+                        cell = gspread.cell.Cell(row=row_idx, col=col_idx, value=float(row[col]))
+                        cells_to_update.append(cell)
                 
-                for c, v in [(roll_col, row[roll_col]), (pallet_col, row[pallet_col]), (square_col, m2)]:
-                    if c in st.session_state.df.columns:
-                        col_idx = st.session_state.df.columns.get_loc(c) + 1
-                        updates.append({
-                            'range': gspread.utils.rowcol_to_a1(real_idx + 2, col_idx), 
-                            'values': [[float(v)]] 
-                        })
-            
-            if updates:
-                sheet.batch_update(updates)
-                st.cache_data.clear()
-                st.session_state.df, _ = load_data()
-                st.success(f"Stock Updated for {selected_month}!")
+                if cells_to_update:
+                    main_sheet.update_cells(cells_to_update)
+                
+                if 'df' in st.session_state:
+                    del st.session_state['df']
+                    
+                st.success("Stock counts and Alerts updated successfully!")
                 st.rerun()
+                
+            except Exception as e:
+                st.error(f"Save failed: {e}")
 
     if low_stock_alerts:
         with st.expander("🚩 View Low Stock Flags", expanded=True):
-            for alert in low_stock_alerts: 
-                st.write(alert)
+            for alert in low_stock_alerts: st.write(alert)
 
-    # --- PROCUREMENT OVERRIDE ---
-    st.divider()
-    st.subheader("📝 Final Procurement Confirmation")
-    if reorder_needed:
-        state_key = f"proc_vFinal_{selected_site}_{selected_month}"
-        if state_key not in st.session_state:
-            df_over = pd.DataFrame(reorder_needed)
-            df_over['Final_Actual_Order'] = df_over['Sug_Qty']
-            df_over['OrderNotes'] = ""
-            st.session_state[state_key] = df_over
 
-        proc_editor = st.data_editor(
-            st.session_state[state_key],
-            column_config={
-                "Material": st.column_config.TextColumn(disabled=True),
-                "Code": st.column_config.TextColumn(disabled=True),
-                "Suggested Order": st.column_config.TextColumn("System Suggestion", disabled=True),
-                "Final_Actual_Order": st.column_config.NumberColumn("Actual Order (Count)", min_value=0.0, step=0.5),
-                "OrderNotes": st.column_config.TextColumn("Reason for Change"),
-                "Sug_Qty": st.column_config.NumberColumn(disabled=True),
-                "Unit_Type": st.column_config.TextColumn(disabled=True),
-                "m2_Per_Pallet": st.column_config.NumberColumn(disabled=True),
-                "Rolls_on_Pallet": st.column_config.NumberColumn(disabled=True),
-            },
-            hide_index=True, use_container_width=True, key=f"edit_{state_key}"
-        )
 
-        if st.button("✅ Save Final Order to Pending List"):
-            client = get_gspread_client()
-            try:
-                pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
-                
-                rows_to_append = []
-                for _, p_row in proc_editor.iterrows():
-                    act_qty = float(p_row['Final_Actual_Order'])
-                    if act_qty > 0:
-                        p_count = act_qty if p_row['Unit_Type'] == "Pallets" else 0.0
-                        r_count = act_qty if p_row['Unit_Type'] == "Rolls" else 0.0
-                        
-                        m2p = float(p_row['m2_Per_Pallet'])
-                        rop = float(p_row['Rolls_on_Pallet']) if float(p_row['Rolls_on_Pallet']) > 0 else 1
-                        calculated_m2 = round(p_count * m2p + r_count * (m2p / rop), 2)
-                        
-                        rows_to_append.append([
-                            p_row['Material'],
-                            p_row['Code'],
-                            p_count,
-                            r_count,
-                            calculated_m2,
-                            act_qty,  
-                            p_row['OrderNotes']
-                        ])
-                
-                if rows_to_append:
-                    pending_sheet.append_rows(rows_to_append)
-                    st.success("Order added to Pending List successfully!")
-                else:
-                    st.warning("Please enter at least one quantity.")
-            except Exception as e:
-                st.error(f"Error saving order: {e}")
 
 # --- MODE 2: TRENDS & MONTHLY BREAKDOWN ---
 elif app_mode == "📈 Stock Trends":
