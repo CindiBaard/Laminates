@@ -289,7 +289,7 @@ if app_mode == "📦 Stock Management":
                 key="btn_quick_reorder_export"
             )
 
-        # --- NEW: PENDING ORDER DATA ENTRY BLOCK ---
+       # --- UPDATED: PENDING ORDER DATA ENTRY BLOCK WITH WEIGHT CALCULATION ---
         st.divider()
         st.subheader("➕ Queue New Pending Procurement Order")
         st.info("Select a flagged low-stock item below to adjust and lock in the definitive quantity being ordered.")
@@ -310,42 +310,48 @@ if app_mode == "📦 Stock Management":
 
         c_form3, c_form4 = st.columns(2)
         with c_form3:
-            # Auto-calculate suggested m² based on input, but leave it editable for manual vendor adjustments
+            # Gather row configurations to compute area and weight profiles
             matched_meta = st.session_state.df[st.session_state.df["Material"] == chosen_material]
             m2p_factor = float(matched_meta["m_Square_per_pallet"].values[0]) if not matched_meta.empty else 0.0
             rop_factor = float(matched_meta["Rolls_on_Pallet"].values[0]) if not matched_meta.empty else 1.0
             m2_per_roll = m2p_factor / rop_factor if rop_factor > 0 else 0.0
             
+            # Calculate m² area
             calculated_m2 = round((input_pallets * m2p_factor) + (input_rolls * m2_per_roll), 2)
             input_m2 = st.number_input("Total Area to Order (m²)", min_value=0.0, value=calculated_m2, step=0.01, format="%.2f")
             
         with c_form4:
-            input_notes = st.text_input("Procurement Notes / PO Number", placeholder="e.g., PO-100234, Supplier X")
+            # Calculate weight live using your defined constants
+            # Pallet_Avg_KG (850) and Roll_Avg_KG (25)
+            calculated_weight = (input_pallets * WEIGHT_FACTORS["Pallet_Avg_KG"]) + (input_rolls * WEIGHT_FACTORS["Roll_Avg_KG"])
+            input_weight = st.number_input("Calculated Weight (KG)", min_value=0.0, value=calculated_weight, step=1.0, format="%.1f", disabled=True)
+
+        input_notes = st.text_input("Procurement Notes / PO Number", placeholder="e.g., PO-100234, Supplier X")
 
         if st.button("🚀 Commit to Pending Orders Pipeline", type="primary"):
-            if input_pallets == 0 and input_rolls == 0 and input_m2 == 0:
-                st.error("Please specify a valid quantity of Pallets, Rolls, or Square Meters to log.")
+            if input_pallets == 0 and input_rolls == 0:
+                st.error("Please specify a valid quantity of Pallets or Rolls to log.")
             else:
                 try:
                     client = get_gspread_client()
                     pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
                     
-                    # Construct row conforming exactly to your destination schema layout
-                    # Schema order: Material, Code, Pending_Pallets, Pending_Rolls, Pending_m2, Final_Actual_Order, Notes
+                    # Construct row conforming to destination schema layout
+                    # Replaces Final_Actual_Order value index location with calculated weight metric
                     new_order_row = [
                         chosen_material,
                         chosen_code,
                         input_pallets,
                         input_rolls,
                         input_m2,
-                        input_pallets, # Mapping tracking to Final_Actual_Order column
+                        input_weight, # Writing total KG directly into the 'Final_Actual_Order' sheet column
                         input_notes
                     ]
                     
                     pending_sheet.append_row(new_order_row)
-                    st.success(f"Successfully logged {chosen_material} into the Pending Pipeline!")
+                    st.success(f"Successfully logged {chosen_material} ({input_weight:,} KG) into the Pending Pipeline!")
                     
-                    # Refresh the operational state cache to update your charts instantly
+                    # Refresh state cache to update views instantly
                     if 'df' in st.session_state:
                         del st.session_state['df']
                     st.rerun()
@@ -665,7 +671,7 @@ elif app_mode == "📋 View Pending Orders":
                     "Pending_Pallets": st.column_config.NumberColumn("Pending_Pallets", format="%.1f", disabled=True),
                     "Pending_Rolls": st.column_config.NumberColumn("Pending_Rolls", format="%.1f", disabled=True),
                     "Pending_m2": st.column_config.NumberColumn("Pending_m2", format="%.2f", disabled=True),
-                    "Final_Actual_Order": st.column_config.NumberColumn("Final_Actual_Order", format="%.1f", disabled=True),
+                    "Final_Actual_Order": st.column_config.NumberColumn("Total Weight (KG)", format="%.1f", disabled=True),
                     "Notes": st.column_config.TextColumn("Notes", width="medium", disabled=True)
                 },
                 hide_index=True,
