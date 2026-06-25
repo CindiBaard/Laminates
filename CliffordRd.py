@@ -255,8 +255,39 @@ if app_mode == "📦 Stock Management":
                 st.error(f"Save failed: {e}")
 
     if low_stock_alerts:
-        with st.expander("🚩 View Low Stock Flags", expanded=True):
-            for alert in low_stock_alerts: st.write(alert)
+        with st.expander("🚩 View Low Stock Flags & Reorder Requirements", expanded=True):
+            # Display the text-based breakdown alerts
+            for alert in low_stock_alerts: 
+                st.write(alert)
+            
+            st.divider()
+            st.subheader("📋 Items Requiring Reorder Summary")
+            
+            # Convert the calculated reorder data list into a structured DataFrame
+            df_reorder_summary = pd.DataFrame(reorder_needed)
+            
+            # Render a clean, non-editable data table 
+            st.dataframe(
+                df_reorder_summary,
+                column_config={
+                    "Material": st.column_config.TextColumn("Material Description"),
+                    "Code": st.column_config.TextColumn("Item Code"),
+                    "Order Qty": st.column_config.TextColumn("Deficit (To Target)"),
+                    "Order m²": st.column_config.NumberColumn("Required Area (m²)", format="%.2f")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # Provide an instant on-the-spot CSV export for the purchasing desk
+            csv_summary = df_reorder_summary.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Export Order List (CSV)",
+                data=csv_summary,
+                file_name=f"Reorder_Requirements_{selected_site}_{selected_month}.csv",
+                mime='text/csv',
+                key="btn_quick_reorder_export"
+            )
 
 
 
