@@ -289,6 +289,70 @@ if app_mode == "📦 Stock Management":
                 key="btn_quick_reorder_export"
             )
 
+        # --- NEW: PENDING ORDER DATA ENTRY BLOCK ---
+        st.divider()
+        st.subheader("➕ Queue New Pending Procurement Order")
+        st.info("Select a flagged low-stock item below to adjust and lock in the definitive quantity being ordered.")
+
+        # Create input form options bounded by items that actually need reordering
+        flagged_materials = df_reorder_summary["Material"].tolist()
+        
+        c_form1, c_form2 = st.columns(2)
+        with c_form1:
+            chosen_material = st.selectbox("Select Material to Order", flagged_materials, key="order_mat_select")
+            # Extract the matching internal Code for the selected material
+            chosen_code = df_reorder_summary[df_reorder_summary["Material"] == chosen_material]["Code"].values[0]
+            st.text_input("Item Code Identifier", value=chosen_code, disabled=True)
+            
+        with c_form2:
+            input_pallets = st.number_input("Confirmed Pallets to Order", min_value=0.0, step=1.0, format="%.1f")
+            input_rolls = st.number_input("Confirmed Loose Rolls to Order", min_value=0.0, step=1.0, format="%.1f")
+
+        c_form3, c_form4 = st.columns(2)
+        with c_form3:
+            # Auto-calculate suggested m² based on input, but leave it editable for manual vendor adjustments
+            matched_meta = st.session_state.df[st.session_state.df["Material"] == chosen_material]
+            m2p_factor = float(matched_meta["m_Square_per_pallet"].values[0]) if not matched_meta.empty else 0.0
+            rop_factor = float(matched_meta["Rolls_on_Pallet"].values[0]) if not matched_meta.empty else 1.0
+            m2_per_roll = m2p_factor / rop_factor if rop_factor > 0 else 0.0
+            
+            calculated_m2 = round((input_pallets * m2p_factor) + (input_rolls * m2_per_roll), 2)
+            input_m2 = st.number_input("Total Area to Order (m²)", min_value=0.0, value=calculated_m2, step=0.01, format="%.2f")
+            
+        with c_form4:
+            input_notes = st.text_input("Procurement Notes / PO Number", placeholder="e.g., PO-100234, Supplier X")
+
+        if st.button("🚀 Commit to Pending Orders Pipeline", type="primary"):
+            if input_pallets == 0 and input_rolls == 0 and input_m2 == 0:
+                st.error("Please specify a valid quantity of Pallets, Rolls, or Square Meters to log.")
+            else:
+                try:
+                    client = get_gspread_client()
+                    pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
+                    
+                    # Construct row conforming exactly to your destination schema layout
+                    # Schema order: Material, Code, Pending_Pallets, Pending_Rolls, Pending_m2, Final_Actual_Order, Notes
+                    new_order_row = [
+                        chosen_material,
+                        chosen_code,
+                        input_pallets,
+                        input_rolls,
+                        input_m2,
+                        input_pallets, # Mapping tracking to Final_Actual_Order column
+                        input_notes
+                    ]
+                    
+                    pending_sheet.append_row(new_order_row)
+                    st.success(f"Successfully logged {chosen_material} into the Pending Pipeline!")
+                    
+                    # Refresh the operational state cache to update your charts instantly
+                    if 'df' in st.session_state:
+                        del st.session_state['df']
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"Failed to submit pending allocation line item: {e}")
+
 
 
 
