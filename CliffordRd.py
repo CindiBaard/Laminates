@@ -95,7 +95,14 @@ if app_mode == "📦 Stock Management":
 
     df_to_edit["Rolls Used"] = 0.0  
     
-    display_cols = ["Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet", "Rolls Used"] + available_cols
+   # Adding a key links this editor directly to st.session_state
+edited_df = st.data_editor(
+    df_to_edit[display_cols], 
+    use_container_width=True, 
+    hide_index=True, 
+    column_config=col_config,
+    key="stock_editor"
+)
 
     col_config = {
         "Material": st.column_config.TextColumn(pinned=True),
@@ -527,7 +534,7 @@ elif app_mode == "📈 Stock Trends":
         except Exception as e:
             st.error(f"Error compiling cumulative stacked data metrics: {e}")
 
-# --- NEW FEATURE: REAL-TIME DAILY USAGE METRICS TRACKER ---
+# --- FIXED: REAL-TIME DAILY USAGE METRICS TRACKER ---
     st.divider()
     st.subheader("⏱️ Real-Time Daily Material Usage Analytics")
     st.caption("Summarizes active consumption metrics currently drafted in the Stock Management table before saving.")
@@ -535,7 +542,9 @@ elif app_mode == "📈 Stock Trends":
     if st.button("📊 Calculate Real-Time Production Consumption"):
         usage_records = []
         
-        # Pull down raw matching row indexes to align data editor states cleanly
+        # Check if the user has made ANY edits in the Stock Management table yet
+        has_edits = "stock_editor" in st.session_state and "edited_rows" in st.session_state["stock_editor"]
+        
         for index, row in st.session_state.df.iterrows():
             mat_name = str(row["Material"]).strip()
             item_code = str(row["Code"])
@@ -545,15 +554,15 @@ elif app_mode == "📈 Stock Trends":
             rop_factor = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
             m2_per_roll = m2p_factor / rop_factor if rop_factor > 0 else 0.0
             
-            # Fallback extraction to pull active session editor state accurately
-            # Since the user changes values inside Mode 1, this loops safely over the session footprint
-            try:
-                # Target the default data editor value key structure
-                # if edited_df isn't in scope globally, fallback securely to 0
-                r_used = float(edited_df.iloc[index].get("Rolls Used", 0.0))
-            except:
-                r_used = 0.0
-                
+            r_used = 0.0
+            
+            # Pull the live value directly out of the session state memory pipeline
+            if has_edits:
+                # Check if this specific row index was modified by the user
+                if index in st.session_state["stock_editor"]["edited_rows"]:
+                    # Grab the "Rolls Used" value from the edited row dictionary
+                    r_used = float(st.session_state["stock_editor"]["edited_rows"][index].get("Rolls Used", 0.0))
+
             if r_used > 0:
                 # Calculate metric area and physical weight distributions
                 calculated_m2_used = round(r_used * m2_per_roll, 2)
@@ -589,7 +598,7 @@ elif app_mode == "📈 Stock Trends":
                 hide_index=True
             )
         else:
-            st.info("💡 No daily usage metrics logged. Change 'Rolls Used (Daily)' from 0.0 on the Stock Management panel to track active production lines.")
+            st.info("💡 No unsaved daily usage metrics found in session memory. Go to **📦 Stock Management**, adjust 'Rolls Used (Daily)' to a value greater than 0, then flip back here to check analytics.")
 
 # --- MODE 3: RECEIVE GOODS ---
 elif app_mode == "🚛 Receive Goods (KPark)":
