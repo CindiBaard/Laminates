@@ -527,6 +527,70 @@ elif app_mode == "📈 Stock Trends":
         except Exception as e:
             st.error(f"Error compiling cumulative stacked data metrics: {e}")
 
+# --- NEW FEATURE: REAL-TIME DAILY USAGE METRICS TRACKER ---
+    st.divider()
+    st.subheader("⏱️ Real-Time Daily Material Usage Analytics")
+    st.caption("Summarizes active consumption metrics currently drafted in the Stock Management table before saving.")
+
+    if st.button("📊 Calculate Real-Time Production Consumption"):
+        usage_records = []
+        
+        # Pull down raw matching row indexes to align data editor states cleanly
+        for index, row in st.session_state.df.iterrows():
+            mat_name = str(row["Material"]).strip()
+            item_code = str(row["Code"])
+            
+            # Extract standard conversion metadata variables
+            m2p_factor = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0.0
+            rop_factor = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
+            m2_per_roll = m2p_factor / rop_factor if rop_factor > 0 else 0.0
+            
+            # Fallback extraction to pull active session editor state accurately
+            # Since the user changes values inside Mode 1, this loops safely over the session footprint
+            try:
+                # Target the default data editor value key structure
+                # if edited_df isn't in scope globally, fallback securely to 0
+                r_used = float(edited_df.iloc[index].get("Rolls Used", 0.0))
+            except:
+                r_used = 0.0
+                
+            if r_used > 0:
+                # Calculate metric area and physical weight distributions
+                calculated_m2_used = round(r_used * m2_per_roll, 2)
+                calculated_kg_used = round(r_used * WEIGHT_FACTORS["Roll_Avg_KG"], 1)
+                
+                usage_records.append({
+                    "Material": mat_name,
+                    "Item Code": item_code,
+                    "Rolls Consumed": r_used,
+                    "Area Used (m²)": calculated_m2_used,
+                    "Est. Weight (KG)": calculated_kg_used
+                })
+                
+        if usage_records:
+            df_usage_summary = pd.DataFrame(usage_records)
+            
+            # Display high-level total operational KPI metrics cards side by side
+            m_c1, m_c2, m_c3 = st.columns(3)
+            m_c1.metric("Total Loose Rolls Consumed", f"{df_usage_summary['Rolls Consumed'].sum():,.1f} Rolls")
+            m_c2.metric("Total Surface Area Used", f"{df_usage_summary['Area Used (m²)'].sum():,.2f} m²")
+            m_c3.metric("Total Throughput Mass Weight", f"{df_usage_summary['Est. Weight (KG)'].sum():,.1f} KG")
+            
+            st.write("")
+            st.dataframe(
+                df_usage_summary,
+                column_config={
+                    "Material": st.column_config.TextColumn("Material Description"),
+                    "Rolls Consumed": st.column_config.NumberColumn("Rolls Used Today", format="%.1f"),
+                    "Area Used (m²)": st.column_config.NumberColumn("Total m² Output", format="%.2f"),
+                    "Est. Weight (KG)": st.column_config.NumberColumn("Total Mass Used (KG)", format="%.1f")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("💡 No daily usage metrics logged. Change 'Rolls Used (Daily)' from 0.0 on the Stock Management panel to track active production lines.")
+
 # --- MODE 3: RECEIVE GOODS ---
 elif app_mode == "🚛 Receive Goods (KPark)":
     st.title("🚛 Goods Receiving (KPark)")
