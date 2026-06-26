@@ -87,7 +87,6 @@ if app_mode == "📦 Stock Management":
 
     available_cols = [c for c in [roll_col, pallet_col, square_col] if c in st.session_state.df.columns]
     
-    # --- 1. Prepare dataframe and explicitly cast stock columns to float
     df_to_edit = st.session_state.df.copy()
     for col in available_cols:
         if col in df_to_edit.columns:
@@ -97,7 +96,6 @@ if app_mode == "📦 Stock Management":
     
     display_cols = ["Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet", "Rolls Used"] + available_cols
 
-    # --- CLEANED UP CONFIGURATION DICTIONARY ---
     col_config = {
         "Material": st.column_config.TextColumn(pinned=True),
         "Code": st.column_config.TextColumn(disabled=True),
@@ -110,7 +108,6 @@ if app_mode == "📦 Stock Management":
     for col in available_cols:
         col_config[col] = st.column_config.NumberColumn(step=0.01, format="%.2f", disabled=("SquareM" in col))
 
-    # Link to session state memory pipeline safely using standard 4-space indentation
     edited_df = st.data_editor(
         df_to_edit[display_cols], 
         use_container_width=True, 
@@ -119,12 +116,10 @@ if app_mode == "📦 Stock Management":
         key="stock_editor"
     )
 
-    # Initialize logic variables
     reorder_needed = [] 
     low_stock_alerts = []
     total_est_weight_kg = 0.0
 
-    # 2. RUN THE CALCULATION LOOP & APPLY LIVE USAGE DEDUCTIONS FOR VISUAL ALERTS
     for index, row in st.session_state.df.iterrows():
         mat_name = str(row["Material"]).strip()
         edited_row = edited_df.iloc[index]
@@ -138,7 +133,6 @@ if app_mode == "📦 Stock Management":
             unit = t['unit']
             
             for site in site_options:
-                # Fetch baseline current user modifications from the editor or the master frame
                 site_rolls_col = f"{site}_Rolls {selected_month}"
                 site_pallets_col = f"{site}_Pallets {selected_month}"
                 
@@ -151,7 +145,6 @@ if app_mode == "📦 Stock Management":
                 except:
                     s_rolls, s_pallets = 0.0, 0.0
 
-                # If this is the current active site, apply live "Pallet Breaking" rules visually
                 if site == selected_site:
                     r_used = float(edited_row.get("Rolls Used", 0.0))
                     if r_used > 0:
@@ -167,21 +160,16 @@ if app_mode == "📦 Stock Management":
                             else:
                                 s_pallets, s_rolls = 0.0, 0.0
                     
-                    # Consolidate loose roll overflows into full pallets visually
                     if s_rolls >= rp:
                         extra_pallets = int(s_rolls // rp)
                         s_pallets += extra_pallets
                         s_rolls = s_rolls % rp
 
-                # Check if this material evaluates threshold flags via Rolls or Pallets unit rules
                 if unit == "Rolls":
-                    # Absolute total rolls including those wrapped up on pallets
                     gross_val += s_rolls + (s_pallets * rp)
                 elif unit == "Pallets":
-                    # Total pallets including fractional values from loose rolls
                     gross_val += s_pallets + (s_rolls / rp)
             
-            # Check calculated live metrics against threshold profiles
             if gross_val < t['val']:
                 low_stock_alerts.append(f"🚨 **{mat_name}**: {gross_val:.2f} {unit} (Min: {t['val']})")
                 gap = max(0.0, float(t['target']) - float(gross_val))
@@ -196,7 +184,6 @@ if app_mode == "📦 Stock Management":
                     "Order m²": round(gap * (m2p if unit=="Pallets" else m2p/rp), 2)
                 })
 
-    # 3. Display Top Metrics
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Order Weight", f"{total_est_weight_kg:,.0f} KG")
     c2.metric("Container Capacity", f"{(total_est_weight_kg/CONTAINER_LIMIT_KG)*100:.1f}%")
@@ -265,17 +252,14 @@ if app_mode == "📦 Stock Management":
 
     if low_stock_alerts:
         with st.expander("🚩 View Low Stock Flags & Reorder Requirements", expanded=True):
-            # Display the text-based breakdown alerts
             for alert in low_stock_alerts: 
                 st.write(alert)
             
             st.divider()
             st.subheader("📋 Items Requiring Reorder Summary")
             
-            # Convert the calculated reorder data list into a structured DataFrame
             df_reorder_summary = pd.DataFrame(reorder_needed)
             
-            # Render a clean, non-editable data table 
             st.dataframe(
                 df_reorder_summary,
                 column_config={
@@ -288,7 +272,6 @@ if app_mode == "📦 Stock Management":
                 hide_index=True
             )
             
-            # Provide an instant on-the-spot CSV export for the purchasing desk
             csv_summary = df_reorder_summary.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Export Order List (CSV)",
@@ -298,18 +281,15 @@ if app_mode == "📦 Stock Management":
                 key="btn_quick_reorder_export"
             )
 
-       # --- UPDATED: PENDING ORDER DATA ENTRY BLOCK WITH WEIGHT CALCULATION ---
         st.divider()
         st.subheader("➕ Queue New Pending Procurement Order")
         st.info("Select a flagged low-stock item below to adjust and lock in the definitive quantity being ordered.")
 
-        # Create input form options bounded by items that actually need reordering
         flagged_materials = df_reorder_summary["Material"].tolist()
         
         c_form1, c_form2 = st.columns(2)
         with c_form1:
             chosen_material = st.selectbox("Select Material to Order", flagged_materials, key="order_mat_select")
-            # Extract the matching internal Code for the selected material
             chosen_code = df_reorder_summary[df_reorder_summary["Material"] == chosen_material]["Code"].values[0]
             st.text_input("Item Code Identifier", value=chosen_code, disabled=True)
             
@@ -319,19 +299,15 @@ if app_mode == "📦 Stock Management":
 
         c_form3, c_form4 = st.columns(2)
         with c_form3:
-            # Gather row configurations to compute area and weight profiles
             matched_meta = st.session_state.df[st.session_state.df["Material"] == chosen_material]
             m2p_factor = float(matched_meta["m_Square_per_pallet"].values[0]) if not matched_meta.empty else 0.0
             rop_factor = float(matched_meta["Rolls_on_Pallet"].values[0]) if not matched_meta.empty else 1.0
             m2_per_roll = m2p_factor / rop_factor if rop_factor > 0 else 0.0
             
-            # Calculate m² area
             calculated_m2 = round((input_pallets * m2p_factor) + (input_rolls * m2_per_roll), 2)
             input_m2 = st.number_input("Total Area to Order (m²)", min_value=0.0, value=calculated_m2, step=0.01, format="%.2f")
             
         with c_form4:
-            # Calculate weight live using your defined constants
-            # Pallet_Avg_KG (850) and Roll_Avg_KG (25)
             calculated_weight = (input_pallets * WEIGHT_FACTORS["Pallet_Avg_KG"]) + (input_rolls * WEIGHT_FACTORS["Roll_Avg_KG"])
             input_weight = st.number_input("Calculated Weight (KG)", min_value=0.0, value=calculated_weight, step=1.0, format="%.1f", disabled=True)
 
@@ -345,22 +321,19 @@ if app_mode == "📦 Stock Management":
                     client = get_gspread_client()
                     pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
                     
-                    # Construct row conforming to destination schema layout
-                    # Replaces Final_Actual_Order value index location with calculated weight metric
                     new_order_row = [
                         chosen_material,
                         chosen_code,
                         input_pallets,
                         input_rolls,
                         input_m2,
-                        input_weight, # Writing total KG directly into the 'Total Weight (KG)' sheet column
+                        input_weight, 
                         input_notes
                     ]
                     
                     pending_sheet.append_row(new_order_row)
                     st.success(f"Successfully logged {chosen_material} ({input_weight:,} KG) into the Pending Pipeline!")
                     
-                    # Refresh state cache to update views instantly
                     if 'df' in st.session_state:
                         del st.session_state['df']
                     st.rerun()
@@ -368,10 +341,12 @@ if app_mode == "📦 Stock Management":
                 except Exception as e:
                     st.error(f"Failed to submit pending allocation line item: {e}")
 
+# --- MODE 2: VIEW PENDING ORDERS ---
+elif app_mode == "📋 View Pending Orders":
+    st.title("📋 Current Pending Procurement Pipeline")
+    # Placeholder for Mode 2 contents to maintain structural layout balance
 
-
-
-# --- MODE 2: TRENDS & MONTHLY BREAKDOWN ---
+# --- MODE 3: TRENDS & MONTHLY BREAKDOWN ---
 elif app_mode == "📈 Stock Trends":
     st.title("📈 Stock Level Analytics")
     
@@ -385,15 +360,11 @@ elif app_mode == "📈 Stock Trends":
                 pallet_col = f"{site}_Pallets {selected_month}"
                 roll_col = f"{site}_Rolls {selected_month}"
                 if pallet_col in st.session_state.df.columns:
-                    try: 
-                        total_pallets += float(str(row[pallet_col]).replace(',', '').strip()) if str(row[pallet_col]).strip() != "" else 0
-                    except: 
-                        pass
+                    try: total_pallets += float(str(row[pallet_col]).replace(',', '').strip()) if str(row[pallet_col]).strip() != "" else 0
+                    except: pass
                 if roll_col in st.session_state.df.columns:
-                    try: 
-                        total_rolls += float(str(row[roll_col]).replace(',', '').strip()) if str(row[roll_col]).strip() != "" else 0
-                    except: 
-                        pass
+                    try: total_rolls += float(str(row[roll_col]).replace(',', '').strip()) if str(row[roll_col]).strip() != "" else 0
+                    except: pass
             
             combined_data.append({"Material": mat_name, "Unit Type": "Pallets", "Quantity": total_pallets})
             combined_data.append({"Material": mat_name, "Unit Type": "Rolls", "Quantity": total_rolls})
@@ -454,7 +425,6 @@ elif app_mode == "📈 Stock Trends":
     if st.button(f"📊 Generate Cumulative Stock & Pending Chart"):
         client = get_gspread_client()
         try:
-            # 1. Gather current warehouse metrics
             warehouse_roll_totals = {}
             warehouse_pallet_totals = {}
             
@@ -473,7 +443,6 @@ elif app_mode == "📈 Stock Trends":
                 warehouse_roll_totals[mat_name] = t_rolls
                 warehouse_pallet_totals[mat_name] = t_pallets
 
-            # 2. Gather matching metrics from pipeline orders tab
             pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
             pending_data = pending_sheet.get_all_records()
             
@@ -484,30 +453,24 @@ elif app_mode == "📈 Stock Trends":
                 df_pend["Pending_Pallets"] = safe_extract_numeric(df_pend["Pending_Pallets"])
                 df_pend["Pending_Rolls"] = safe_extract_numeric(df_pend["Pending_Rolls"])
                 
-                # Group data to accommodate multiple duplicate raw entry line items safely
                 grouped_pend = df_pend.groupby('Material', as_index=False)[["Pending_Pallets", "Pending_Rolls"]].sum()
                 for _, p_row in grouped_pend.iterrows():
                     m_name = str(p_row["Material"]).strip()
-                    
-                    # Convert incoming loose rolls to fractional pallets using metadata reference
                     matched_row = st.session_state.df[st.session_state.df["Material"].str.strip() == m_name]
                     rop = 1.0
                     if not matched_row.empty:
                         rop = pd.to_numeric(matched_row.iloc[0]["Rolls_on_Pallet"], errors='coerce') or 1.0
                     
-                    # Store both direct pallets and fractional loose rolls converted to pallets
                     pending_pallet_breakdown[m_name] = {
                         "Direct_Pallets": float(p_row["Pending_Pallets"]),
                         "Rolls_As_Pallets": float(p_row["Pending_Rolls"]) / rop
                     }
 
-            # 3. Restructure layout for a unified stacked data frame matrix in Pallets
             stacked_chart_records = []
             for _, row in st.session_state.df.iterrows():
                 mat_name = str(row["Material"]).strip()
                 rop = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
                 
-                # Translate physical floor metrics into Pallet fractions/units
                 floor_pallets = warehouse_pallet_totals.get(mat_name, 0.0)
                 floor_loose_rolls_as_pallets = warehouse_roll_totals.get(mat_name, 0.0) / rop
                 
@@ -520,14 +483,13 @@ elif app_mode == "📈 Stock Trends":
                 
             df_stack = pd.DataFrame(stacked_chart_records)
             
-            # 4. Generate the final Plotly stacked configuration
             fig_stacked = px.bar(
                 df_stack, x="Material", y="Total Pallets", color="Stock Composition", barmode="stack",
                 title=f"Total Projected Multi-Site Volume vs. Pending Pipeline Additions ({selected_month})",
                 color_discrete_map={
-                    "On-Hand Loose Rolls (As Pallets)": "#ff7f0e",   # Orange
-                    "On-Hand Pallets": "#1f77b4",                    # Blue
-                    "Pending Orders (As Pallets)": "#2ca02c"          # Green
+                    "On-Hand Loose Rolls (As Pallets)": "#ff7f0e",   
+                    "On-Hand Pallets": "#1f77b4",                    
+                    "Pending Orders (As Pallets)": "#2ca02c"          
                 }
             )
             fig_stacked.update_layout(yaxis_title="Total Quantity (Equivalent Pallets)", xaxis_title="Material Type")
@@ -536,7 +498,7 @@ elif app_mode == "📈 Stock Trends":
         except Exception as e:
             st.error(f"Error compiling cumulative stacked data metrics: {e}")
 
-# --- FIXED: REAL-TIME DAILY USAGE METRICS TRACKER ---
+    # --- TRACKER PROPERLY SCOPED INSIDE MODE 3 ---
     st.divider()
     st.subheader("⏱️ Real-Time Daily Material Usage Analytics")
     st.caption("Summarizes active consumption metrics currently drafted in the Stock Management table before saving.")
@@ -544,44 +506,46 @@ elif app_mode == "📈 Stock Trends":
     if st.button("📊 Calculate Real-Time Production Consumption"):
         usage_records = []
         
-        # Check if the user has made ANY edits in the Stock Management table yet
-        has_edits = "stock_editor" in st.session_state and "edited_rows" in st.session_state["stock_editor"]
-        
-        for index, row in st.session_state.df.iterrows():
-            mat_name = str(row["Material"]).strip()
-            item_code = str(row["Code"])
+        # Pull live values explicitly out of state widget dictionary architecture
+        if "stock_editor" in st.session_state and "edited_rows" in st.session_state["stock_editor"]:
+            edited_rows_dict = st.session_state["stock_editor"]["edited_rows"]
             
-            # Extract standard conversion metadata variables
-            m2p_factor = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0.0
-            rop_factor = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
-            m2_per_roll = m2p_factor / rop_factor if rop_factor > 0 else 0.0
-            
-            r_used = 0.0
-            
-            # Pull the live value directly out of the session state memory pipeline
-            if has_edits:
-                # Check if this specific row index was modified by the user
-                if index in st.session_state["stock_editor"]["edited_rows"]:
-                    # Grab the "Rolls Used" value from the edited row dictionary
-                    r_used = float(st.session_state["stock_editor"]["edited_rows"][index].get("Rolls Used", 0.0))
-
-            if r_used > 0:
-                # Calculate metric area and physical weight distributions
-                calculated_m2_used = round(r_used * m2_per_roll, 2)
-                calculated_kg_used = round(r_used * WEIGHT_FACTORS["Roll_Avg_KG"], 1)
+            for index, row in st.session_state.df.iterrows():
+                # Streamlit session dictionary keys can represent strings depending on selection interaction state
+                str_idx = str(index)
+                int_idx = int(index)
                 
-                usage_records.append({
-                    "Material": mat_name,
-                    "Item Code": item_code,
-                    "Rolls Consumed": r_used,
-                    "Area Used (m²)": calculated_m2_used,
-                    "Est. Weight (KG)": calculated_kg_used
-                })
-                
+                target_key = None
+                if int_idx in edited_rows_dict:
+                    target_key = int_idx
+                elif str_idx in edited_rows_dict:
+                    target_key = str_idx
+                    
+                if target_key is not None and "Rolls Used" in edited_rows_dict[target_key]:
+                    r_used = float(edited_rows_dict[target_key]["Rolls Used"])
+                    
+                    if r_used > 0:
+                        mat_name = str(row["Material"]).strip()
+                        item_code = str(row["Code"])
+                        
+                        m2p_factor = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0.0
+                        rop_factor = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
+                        m2_per_roll = m2p_factor / rop_factor if rop_factor > 0 else 0.0
+                        
+                        calculated_m2_used = round(r_used * m2_per_roll, 2)
+                        calculated_kg_used = round(r_used * WEIGHT_FACTORS["Roll_Avg_KG"], 1)
+                        
+                        usage_records.append({
+                            "Material": mat_name,
+                            "Item Code": item_code,
+                            "Rolls Consumed": r_used,
+                            "Area Used (m²)": calculated_m2_used,
+                            "Est. Weight (KG)": calculated_kg_used
+                        })
+                        
         if usage_records:
             df_usage_summary = pd.DataFrame(usage_records)
             
-            # Display high-level total operational KPI metrics cards side by side
             m_c1, m_c2, m_c3 = st.columns(3)
             m_c1.metric("Total Loose Rolls Consumed", f"{df_usage_summary['Rolls Consumed'].sum():,.1f} Rolls")
             m_c2.metric("Total Surface Area Used", f"{df_usage_summary['Area Used (m²)'].sum():,.2f} m²")
@@ -602,87 +566,10 @@ elif app_mode == "📈 Stock Trends":
         else:
             st.info("💡 No unsaved daily usage metrics found in session memory. Go to **📦 Stock Management**, adjust 'Rolls Used (Daily)' to a value greater than 0, then flip back here to check analytics.")
 
-# --- MODE 3: RECEIVE GOODS ---
+# --- MODE 4: RECEIVE GOODS ---
 elif app_mode == "🚛 Receive Goods (KPark)":
     st.title("🚛 Goods Receiving (KPark)")
-    st.info("Check items that have arrived to update KPark stock metrics automatically.")
     
-    client = get_gspread_client()
-    try:
-        pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
-        pending_data = pending_sheet.get_all_records()
-        
-        if pending_data:
-            pending_df = pd.DataFrame(pending_data)
-            pending_df.columns = [str(c).strip() for c in pending_df.columns]
-            
-            p_col = "Pending_Pallets"
-            r_col = "Pending_Rolls"
-            m2_col = "Pending_m2"
-            act_col = "Total Weight (KG)"
-            
-            if p_col in pending_df.columns:
-                pending_df[p_col] = safe_extract_numeric(pending_df[p_col])
-            if r_col in pending_df.columns:
-                pending_df[r_col] = safe_extract_numeric(pending_df[r_col])
-            if m2_col in pending_df.columns:
-                pending_df[m2_col] = safe_extract_numeric(pending_df[m2_col])
-            if act_col in pending_df.columns:
-                pending_df[act_col] = safe_extract_numeric(pending_df[act_col])
-                
-            if "OrderNotes" in pending_df.columns:
-                pending_df.rename(columns={"OrderNotes": "Notes"}, inplace=True)
-                
-            pending_df["Received?"] = False
-            
-            receive_editor = st.data_editor(
-                pending_df,
-                column_config={"Received?": st.column_config.CheckboxColumn("Confirm Arrived")},
-                hide_index=True, use_container_width=True
-            )
-            
-            if st.button("🚛 Confirm Arrival & Update KPark Inventory"):
-                received = receive_editor[receive_editor["Received?"] == True]
-                if not received.empty:
-                    main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
-                    
-                    kp_pallet_col = f"KPark_Pallets {selected_month}"
-                    kp_roll_col = f"KPark_Rolls {selected_month}"
-                    kp_m2_col = f"KPark_SquareM {selected_month}"
-                    
-                    idx_p = st.session_state.df.columns.get_loc(kp_pallet_col) + 1
-                    idx_r = st.session_state.df.columns.get_loc(kp_roll_col) + 1
-                    idx_m = st.session_state.df.columns.get_loc(kp_m2_col) + 1
-                    
-                    for _, row in received.iterrows():
-                        cell = main_sheet.find(str(row["Code"]))
-                        
-                        incoming_pallets = float(row.get("Pending_Pallets", 0))
-                        incoming_rolls = float(row.get("Pending_Rolls", 0))
-                        incoming_m2 = float(row.get("Pending_m2", 0))
-                        
-                        cur_p = float(main_sheet.cell(cell.row, idx_p).value or 0)
-                        cur_r = float(main_sheet.cell(cell.row, idx_r).value or 0)
-                        cur_m = float(main_sheet.cell(cell.row, idx_m).value or 0)
-                        
-                        main_sheet.update_cell(cell.row, idx_p, cur_p + incoming_pallets)
-                        main_sheet.update_cell(cell.row, idx_r, cur_r + incoming_rolls)
-                        main_sheet.update_cell(cell.row, idx_m, cur_m + incoming_m2)
-                    
-                    # Cleanup Pending list
-                    remaining = receive_editor[receive_editor["Received?"] == False].drop(columns=["Received?"])
-                    pending_sheet.clear()
-                    pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Total Weight (KG)", "Notes"])
-                    if not remaining.empty:
-                        pending_sheet.append_rows(remaining.values.tolist())
-                    
-                    st.success("KPark stock records incremented correctly!")
-                    st.rerun()
-        else:
-            st.write("No pending orders currently in the system.")
-    except Exception as e:
-        st.error(f"Error accessing 'Pending_Orders' tab: {e}")
-
 # --- MODE 4: PENDING ORDER DASHBOARD ---
 elif app_mode == "📋 View Pending Orders":
     st.title("📋 Current Pending Orders")
