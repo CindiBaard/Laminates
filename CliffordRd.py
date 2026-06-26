@@ -87,7 +87,7 @@ if app_mode == "📦 Stock Management":
 
     available_cols = [c for c in [roll_col, pallet_col, square_col] if c in st.session_state.df.columns]
     
-    # 1. Prepare dataframe and explicitly cast stock columns to float
+    # --- 1. Prepare dataframe and explicitly cast stock columns to float
     df_to_edit = st.session_state.df.copy()
     for col in available_cols:
         if col in df_to_edit.columns:
@@ -95,15 +95,9 @@ if app_mode == "📦 Stock Management":
 
     df_to_edit["Rolls Used"] = 0.0  
     
-   # Adding a key links this editor directly to st.session_state
-edited_df = st.data_editor(
-    df_to_edit[display_cols], 
-    use_container_width=True, 
-    hide_index=True, 
-    column_config=col_config,
-    key="stock_editor"
-)
+    display_cols = ["Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet", "Rolls Used"] + available_cols
 
+    # --- CLEANED UP CONFIGURATION DICTIONARY ---
     col_config = {
         "Material": st.column_config.TextColumn(pinned=True),
         "Code": st.column_config.TextColumn(disabled=True),
@@ -112,10 +106,18 @@ edited_df = st.data_editor(
         "m_Square_per_pallet": st.column_config.NumberColumn(disabled=True),
         "Rolls Used": st.column_config.NumberColumn("Rolls Used (Daily)", min_value=0.0, step=0.5, format="%.1f"),
     }
+    
     for col in available_cols:
         col_config[col] = st.column_config.NumberColumn(step=0.01, format="%.2f", disabled=("SquareM" in col))
 
-    edited_df = st.data_editor(df_to_edit[display_cols], use_container_width=True, hide_index=True, column_config=col_config)
+    # Link to session state memory pipeline safely using standard 4-space indentation
+    edited_df = st.data_editor(
+        df_to_edit[display_cols], 
+        use_container_width=True, 
+        hide_index=True, 
+        column_config=col_config,
+        key="stock_editor"
+    )
 
     # Initialize logic variables
     reorder_needed = [] 
