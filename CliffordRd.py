@@ -375,7 +375,8 @@ elif app_mode == "📈 Stock Trends":
         )
         st.plotly_chart(fig_combined, use_container_width=True)
 
-        # --- VISUALIZATION: CONSUMPTION DEFICIT CHART ---
+        
+    # --- VISUALIZATION: CONSUMPTION DEFICIT CHART ---
             st.write("")
             
             # Sort the summary so the largest deficit is on top
@@ -400,6 +401,7 @@ elif app_mode == "📈 Stock Trends":
             )
             
             st.plotly_chart(fig_consumption, use_container_width=True)
+        
 
     # --- STANDALONE PENDING ORDERS BAR CHART ---
     st.divider()
