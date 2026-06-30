@@ -567,8 +567,10 @@ elif app_mode == "📈 Stock Trends":
 # --- MODE 4: RECEIVE GOODS ---
 elif app_mode == "🚛 Receive Goods (KPark)":
     st.title("🚛 Goods Receiving (KPark)")
+    st.info("Form configuration for inbound stock allocations coming soon.")
+    # You can add your gspread lookups or text inputs for KPark arrivals here!
     
-# --- MODE 4: PENDING ORDER DASHBOARD ---
+# --- MODE 5: PENDING ORDER DASHBOARD ---
 elif app_mode == "📋 View Pending Orders":
     st.title("📋 Current Pending Orders")
     st.info("View, export, or remove outstanding orders from the system.")
