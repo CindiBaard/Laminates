@@ -375,6 +375,32 @@ elif app_mode == "📈 Stock Trends":
         )
         st.plotly_chart(fig_combined, use_container_width=True)
 
+        # --- VISUALIZATION: CONSUMPTION DEFICIT CHART ---
+            st.write("")
+            
+            # Sort the summary so the largest deficit is on top
+            df_chart = df_usage_summary.sort_values(by="Rolls Consumed (Deficit)", ascending=True)
+            
+            fig_consumption = px.bar(
+                df_chart, 
+                x="Rolls Consumed (Deficit)", 
+                y="Material", 
+                orientation='h',
+                title="Total Material Volume Below Target (Rolls Consumed)",
+                labels={"Rolls Consumed (Deficit)": "Rolls Below Target", "Material": "Material Description"},
+                color="Rolls Consumed (Deficit)",
+                color_continuous_scale="Reds" # Distinct gradient to emphasize critical low stock
+            )
+            
+            # Clean up chart layout configurations
+            fig_consumption.update_layout(
+                showlegend=False,
+                height=max(300, len(df_chart) * 35), # Adjusts height dynamically based on items rows
+                margin=dict(l=5, r=5, t=40, b=20)
+            )
+            
+            st.plotly_chart(fig_consumption, use_container_width=True)
+
     # --- STANDALONE PENDING ORDERS BAR CHART ---
     st.divider()
     st.subheader(f"⏳ Standalone Pending Orders Chart ({selected_month})")
@@ -574,6 +600,7 @@ elif app_mode == "📈 Stock Trends":
             )
         else:
             st.success("✨ Optimal Stock Levels Maintained! All items are currently meeting or exceeding target levels.")
+
 # --- MODE 4: RECEIVE GOODS ---
 elif app_mode == "🚛 Receive Goods (KPark)":
     st.title("🚛 Goods Receiving (KPark)")
