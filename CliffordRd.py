@@ -375,8 +375,8 @@ elif app_mode == "📈 Stock Trends":
         )
         st.plotly_chart(fig_combined, use_container_width=True)
 
-        
-    # --- VISUALIZATION: CONSUMPTION DEFICIT CHART ---
+
+# --- VISUALIZATION: CONSUMPTION DEFICIT CHART ---
             st.write("")
             
             # Sort the summary so the largest deficit is on top
@@ -398,7 +398,7 @@ elif app_mode == "📈 Stock Trends":
                 showlegend=False,
                 height=max(300, len(df_chart) * 35), # Adjusts height dynamically based on items rows
                 margin=dict(l=5, r=5, t=40, b=20)
-            )
+            )    
             
             st.plotly_chart(fig_consumption, use_container_width=True)
         
