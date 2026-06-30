@@ -496,74 +496,84 @@ elif app_mode == "📈 Stock Trends":
         except Exception as e:
             st.error(f"Error compiling cumulative stacked data metrics: {e}")
 
-    # --- TRACKER PROPERLY SCOPED INSIDE MODE 3 ---
+    # --- TRACKER REWRITTEN FOR SAVED VALUES ---
     st.divider()
-    st.subheader("⏱️ Real-Time Daily Material Usage Analytics")
-    st.caption("Summarizes active consumption metrics currently drafted in the Stock Management table before saving.")
+    st.subheader("⏱️ Saved Material Consumption Analytics")
+    st.caption("Summarizes total active depletion metrics based on currently saved warehouse stock vs. target thresholds.")
 
-    if st.button("📊 Calculate Real-Time Production Consumption"):
+    if st.button("📊 Calculate Saved Production Consumption"):
         usage_records = []
         
-        # Pull live values explicitly out of state widget dictionary architecture
-        if "stock_editor" in st.session_state and "edited_rows" in st.session_state["stock_editor"]:
-            edited_rows_dict = st.session_state["stock_editor"]["edited_rows"]
+        for index, row in st.session_state.df.iterrows():
+            mat_name = str(row["Material"]).strip()
+            item_code = str(row["Code"])
             
-            for index, row in st.session_state.df.iterrows():
-                # Streamlit session dictionary keys can represent strings depending on selection interaction state
-                str_idx = str(index)
-                int_idx = int(index)
+            if mat_name in thresholds:
+                t = thresholds[mat_name]
+                unit = t['unit']
+                target_qty = float(t['target'])
                 
-                target_key = None
-                if int_idx in edited_rows_dict:
-                    target_key = int_idx
-                elif str_idx in edited_rows_dict:
-                    target_key = str_idx
+                # Calculate current total stock across all sites for this material
+                current_gross_val = 0.0
+                rop_factor = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
+                m2p_factor = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0.0
+                m2_per_roll = m2p_factor / rop_factor if rop_factor > 0 else 0.0
+                
+                for site in site_options:
+                    site_rolls_col = f"{site}_Rolls {selected_month}"
+                    site_pallets_col = f"{site}_Pallets {selected_month}"
                     
-                if target_key is not None and "Rolls Used" in edited_rows_dict[target_key]:
-                    r_used = float(edited_rows_dict[target_key]["Rolls Used"])
+                    s_rolls = pd.to_numeric(row.get(site_rolls_col, 0.0), errors='coerce') or 0.0
+                    s_pallets = pd.to_numeric(row.get(site_pallets_col, 0.0), errors='coerce') or 0.0
                     
-                    if r_used > 0:
-                        mat_name = str(row["Material"]).strip()
-                        item_code = str(row["Code"])
+                    if unit == "Rolls":
+                        current_gross_val += s_rolls + (s_pallets * rop_factor)
+                    elif unit == "Pallets":
+                        current_gross_val += s_pallets + (s_rolls / rop_factor)
+                
+                # Consumption is determined by how much we are under target thresholds
+                if current_gross_val < target_qty:
+                    deficit = target_qty - current_gross_val
+                    
+                    if unit == "Pallets":
+                        rolls_consumed = deficit * rop_factor
+                        area_consumed = deficit * m2p_factor
+                    else: # Unit is Rolls
+                        rolls_consumed = deficit
+                        area_consumed = deficit * m2_per_roll
                         
-                        m2p_factor = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0.0
-                        rop_factor = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
-                        m2_per_roll = m2p_factor / rop_factor if rop_factor > 0 else 0.0
-                        
-                        calculated_m2_used = round(r_used * m2_per_roll, 2)
-                        calculated_kg_used = round(r_used * WEIGHT_FACTORS["Roll_Avg_KG"], 1)
-                        
-                        usage_records.append({
-                            "Material": mat_name,
-                            "Item Code": item_code,
-                            "Rolls Consumed": r_used,
-                            "Area Used (m²)": calculated_m2_used,
-                            "Est. Weight (KG)": calculated_kg_used
-                        })
+                    weight_consumed = rolls_consumed * WEIGHT_FACTORS["Roll_Avg_KG"]
+                    
+                    usage_records.append({
+                        "Material": mat_name,
+                        "Item Code": item_code,
+                        "Rolls Consumed (Deficit)": round(rolls_consumed, 1),
+                        "Area Deficit (m²)": round(area_consumed, 2),
+                        "Est. Missing Weight (KG)": round(weight_consumed, 1)
+                    })
                         
         if usage_records:
             df_usage_summary = pd.DataFrame(usage_records)
             
             m_c1, m_c2, m_c3 = st.columns(3)
-            m_c1.metric("Total Loose Rolls Consumed", f"{df_usage_summary['Rolls Consumed'].sum():,.1f} Rolls")
-            m_c2.metric("Total Surface Area Used", f"{df_usage_summary['Area Used (m²)'].sum():,.2f} m²")
-            m_c3.metric("Total Throughput Mass Weight", f"{df_usage_summary['Est. Weight (KG)'].sum():,.1f} KG")
+            m_c1.metric("Total Rolls Below Target", f"{df_usage_summary['Rolls Consumed (Deficit)'].sum():,.1f} Rolls")
+            m_c2.metric("Total Surface Area Deficit", f"{df_usage_summary['Area Deficit (m²)'].sum():,.2f} m²")
+            m_c3.metric("Total Required Mass Weight", f"{df_usage_summary['Est. Missing Weight (KG)'].sum():,.1f} KG")
             
             st.write("")
             st.dataframe(
                 df_usage_summary,
                 column_config={
                     "Material": st.column_config.TextColumn("Material Description"),
-                    "Rolls Consumed": st.column_config.NumberColumn("Rolls Used Today", format="%.1f"),
-                    "Area Used (m²)": st.column_config.NumberColumn("Total m² Output", format="%.2f"),
-                    "Est. Weight (KG)": st.column_config.NumberColumn("Total Mass Used (KG)", format="%.1f")
+                    "Rolls Consumed (Deficit)": st.column_config.NumberColumn("Rolls Shorthand", format="%.1f"),
+                    "Area Deficit (m²)": st.column_config.NumberColumn("Total m² Deficit", format="%.2f"),
+                    "Est. Missing Weight (KG)": st.column_config.NumberColumn("Mass Weight Required (KG)", format="%.1f")
                 },
                 use_container_width=True,
                 hide_index=True
             )
         else:
-            st.info("💡 No unsaved daily usage metrics found in session memory. Go to **📦 Stock Management**, adjust 'Rolls Used (Daily)' to a value greater than 0, then flip back here to check analytics.")
-
+            st.success("✨ Optimal Stock Levels Maintained! All items are currently meeting or exceeding target levels.")
 # --- MODE 4: RECEIVE GOODS ---
 elif app_mode == "🚛 Receive Goods (KPark)":
     st.title("🚛 Goods Receiving (KPark)")
