@@ -341,10 +341,8 @@ if app_mode == "📦 Stock Management":
                 except Exception as e:
                     st.error(f"Failed to submit pending allocation line item: {e}")
 
-# --- MODE 2: VIEW PENDING ORDERS ---
-elif app_mode == "📋 View Pending Orders":
-    st.title("📋 Current Pending Procurement Pipeline")
-    # Placeholder for Mode 2 contents to maintain structural layout balance
+# --- MODE 2: VIEW PENDING ORDERS moved to Mode  ---
+
 
 # --- MODE 3: TRENDS & MONTHLY BREAKDOWN ---
 elif app_mode == "📈 Stock Trends":
