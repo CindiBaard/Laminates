@@ -376,7 +376,126 @@ elif app_mode == "📈 Stock Trends":
         )
         st.plotly_chart(fig_combined, use_container_width=True)
 
-    # === FEATURE 2: SAVED MATERIAL CONSUMPTION ANALYTICS ===
+    # === FEATURE 2: STANDALONE PENDING ORDERS BAR CHART ===
+    st.divider()
+    st.subheader(f"⏳ Standalone Pending Orders Chart ({selected_month})")
+    if st.button(f"📊 Generate Standalone Pending Chart for {selected_month}"):
+        client = get_gspread_client()
+        try:
+            pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
+            pending_data = pending_sheet.get_all_records()
+            
+            if pending_data:
+                df_pending = pd.DataFrame(pending_data)
+                df_pending.columns = [str(c).strip() for c in df_pending.columns]
+                
+                p_col = "Pending_Pallets"
+                r_col = "Pending_Rolls"
+                
+                if p_col in df_pending.columns and r_col in df_pending.columns:
+                    df_pending[p_col] = safe_extract_numeric(df_pending[p_col])
+                    df_pending[r_col] = safe_extract_numeric(df_pending[r_col])
+                    
+                    grouped_p = df_pending.groupby('Material', as_index=False)[[p_col, r_col]].sum()
+                    
+                    pending_graph_data = []
+                    for _, p_row in grouped_p.iterrows():
+                        mat_name = p_row["Material"]
+                        pending_graph_data.append({"Material": mat_name, "Unit Type": "Pallets", "Quantity": float(p_row[p_col])})
+                        pending_graph_data.append({"Material": mat_name, "Unit Type": "Rolls", "Quantity": float(p_row[r_col])})
+                        
+                    df_pending_graph = pd.DataFrame(pending_graph_data)
+                    fig_standalone_pending = px.bar(
+                        df_pending_graph, x="Material", y="Quantity", color="Unit Type", barmode="group",
+                        title="Pending Materials Outstanding (All Warehouses Combined)",
+                        color_discrete_map={"Pallets": "#2ca02c", "Rolls": "#9467bd"}
+                    )
+                    st.plotly_chart(fig_standalone_pending, use_container_width=True)
+            else:
+                st.info("The 'Pending_Orders' sheet is currently empty.")
+        except Exception as e:
+            st.error(f"Could not read 'Pending_Orders' tab: {e}")
+
+    # === FEATURE 3: COMBINED INVENTORY + PENDING STACKED PALLETS CHART ===
+    st.divider()
+    st.subheader(f"📈 Total Projected Availability (Stock + Pending Arrivals in Pallets)")
+    if st.button(f"📊 Generate Cumulative Stock & Pending Chart"):
+        client = get_gspread_client()
+        try:
+            warehouse_roll_totals = {}
+            warehouse_pallet_totals = {}
+            
+            for _, row in st.session_state.df.iterrows():
+                mat_name = str(row["Material"]).strip()
+                t_pallets, t_rolls = 0.0, 0.0
+                for site in site_options:
+                    p_col = f"{site}_Pallets {selected_month}"
+                    r_col = f"{site}_Rolls {selected_month}"
+                    if p_col in st.session_state.df.columns:
+                        try: t_pallets += float(str(row[p_col]).replace(',', '').strip()) if str(row[p_col]).strip() != "" else 0
+                        except: pass
+                    if r_col in st.session_state.df.columns:
+                        try: t_rolls += float(str(row[r_col]).replace(',', '').strip()) if str(row[r_col]).strip() != "" else 0
+                        except: pass
+                warehouse_roll_totals[mat_name] = t_rolls
+                warehouse_pallet_totals[mat_name] = t_pallets
+
+            pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
+            pending_data = pending_sheet.get_all_records()
+            
+            pending_pallet_breakdown = {}
+            if pending_data:
+                df_pend = pd.DataFrame(pending_data)
+                df_pend.columns = [str(c).strip() for c in df_pend.columns]
+                df_pend["Pending_Pallets"] = safe_extract_numeric(df_pend["Pending_Pallets"])
+                df_pend["Pending_Rolls"] = safe_extract_numeric(df_pend["Pending_Rolls"])
+                
+                grouped_pend = df_pend.groupby('Material', as_index=False)[["Pending_Pallets", "Pending_Rolls"]].sum()
+                for _, p_row in grouped_pend.iterrows():
+                    m_name = str(p_row["Material"]).strip()
+                    matched_row = st.session_state.df[st.session_state.df["Material"].str.strip() == m_name]
+                    rop = 1.0
+                    if not matched_row.empty:
+                        rop = pd.to_numeric(matched_row.iloc[0]["Rolls_on_Pallet"], errors='coerce') or 1.0
+                    
+                    pending_pallet_breakdown[m_name] = {
+                        "Direct_Pallets": float(p_row["Pending_Pallets"]),
+                        "Rolls_As_Pallets": float(p_row["Pending_Rolls"]) / rop
+                    }
+
+            stacked_chart_records = []
+            for _, row in st.session_state.df.iterrows():
+                mat_name = str(row["Material"]).strip()
+                rop = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
+                
+                floor_pallets = warehouse_pallet_totals.get(mat_name, 0.0)
+                floor_loose_rolls_as_pallets = warehouse_roll_totals.get(mat_name, 0.0) / rop
+                
+                pipeline_data = pending_pallet_breakdown.get(mat_name, {"Direct_Pallets": 0.0, "Rolls_As_Pallets": 0.0})
+                incoming_pallets_total = pipeline_data["Direct_Pallets"] + pipeline_data["Rolls_As_Pallets"]
+                
+                stacked_chart_records.append({"Material": mat_name, "Stock Composition": "On-Hand Pallets", "Total Pallets": floor_pallets})
+                stacked_chart_records.append({"Material": mat_name, "Stock Composition": "On-Hand Loose Rolls (As Pallets)", "Total Pallets": floor_loose_rolls_as_pallets})
+                stacked_chart_records.append({"Material": mat_name, "Stock Composition": "Pending Orders (As Pallets)", "Total Pallets": incoming_pallets_total})
+                
+            df_stack = pd.DataFrame(stacked_chart_records)
+            
+            fig_stacked = px.bar(
+                df_stack, x="Material", y="Total Pallets", color="Stock Composition", barmode="stack",
+                title=f"Total Projected Multi-Site Volume vs. Pending Pipeline Additions ({selected_month})",
+                color_discrete_map={
+                    "On-Hand Loose Rolls (As Pallets)": "#ff7f0e",   
+                    "On-Hand Pallets": "#1f77b4",                    
+                    "Pending Orders (As Pallets)": "#2ca02c"          
+                }
+            )
+            fig_stacked.update_layout(yaxis_title="Total Quantity (Equivalent Pallets)", xaxis_title="Material Type")
+            st.plotly_chart(fig_stacked, use_container_width=True)
+            
+        except Exception as e:
+            st.error(f"Error compiling cumulative stacked data metrics: {e}")
+
+    # === FEATURE 4: SAVED MATERIAL CONSUMPTION ANALYTICS ===
     st.divider()
     st.subheader("⏱️ Saved Material Consumption Analytics")
     st.caption("Summarizes total active depletion metrics based on currently saved warehouse stock vs. target thresholds.")
@@ -469,7 +588,7 @@ elif app_mode == "📈 Stock Trends":
             st.plotly_chart(fig_consumption, use_container_width=True)
         else:
             st.success("✨ Optimal Stock Levels Maintained! All items meet or exceed targets.")
-            
+
 # --- MODE 4: RECEIVE GOODS ---
 elif app_mode == "🚛 Receive Goods (KPark)":
     st.title("🚛 Goods Receiving (KPark)")
