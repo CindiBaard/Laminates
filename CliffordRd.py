@@ -495,13 +495,14 @@ elif app_mode == "📈 Stock Trends":
         except Exception as e:
             st.error(f"Error compiling cumulative stacked data metrics: {e}")
 
-    # === FEATURE 4: SAVED MATERIAL CONSUMPTION ANALYTICS ===
+# === FEATURE 4: SAVED MATERIAL CONSUMPTION & BUFFER ANALYTICS ===
     st.divider()
-    st.subheader("⏱️ Saved Material Consumption Analytics")
-    st.caption("Summarizes total active depletion metrics based on currently saved warehouse stock vs. target thresholds.")
+    st.subheader("⏱️ Saved Material Consumption & Buffer Analytics")
+    st.caption("Summarizes stock depletion vs. target thresholds alongside active warehouse safety buffers.")
 
     if st.button("📊 Calculate Saved Production Consumption"):
         usage_records = []
+        buffer_records = []
         
         for index, row in st.session_state.df.iterrows():
             mat_name = str(row["Material"]).strip()
@@ -529,9 +530,9 @@ elif app_mode == "📈 Stock Trends":
                     elif unit == "Pallets":
                         current_gross_val += s_pallets + (s_rolls / rop_factor)
                 
+                # --- CASE 1: STOCK DEFICIT (Below Target) ---
                 if current_gross_val < target_qty:
                     deficit = target_qty - current_gross_val
-                    
                     if unit == "Pallets":
                         rolls_consumed = deficit * rop_factor
                         area_consumed = deficit * m2p_factor
@@ -548,47 +549,71 @@ elif app_mode == "📈 Stock Trends":
                         "Area Deficit (m²)": round(area_consumed, 2),
                         "Est. Missing Weight (KG)": round(weight_consumed, 1)
                     })
+                
+                # --- CASE 2: STOCK BUFFER (Above Target) ---
+                elif current_gross_val > target_qty:
+                    surplus = current_gross_val - target_qty
+                    if unit == "Pallets":
+                        rolls_buffer = surplus * rop_factor
+                        area_buffer = surplus * m2p_factor
+                    else:
+                        rolls_buffer = surplus
+                        area_buffer = surplus * m2_per_roll
                         
+                    weight_buffer = rolls_buffer * WEIGHT_FACTORS["Roll_Avg_KG"]
+                    
+                    buffer_records.append({
+                        "Material": mat_name,
+                        "Item Code": item_code,
+                        "Excess Rolls (Buffer)": round(rolls_buffer, 1),
+                        "Surplus Area (m²)": round(area_buffer, 2),
+                        "Buffer Weight (KG)": round(weight_buffer, 1)
+                    })
+                        
+        # --- DISPLAY DEFICIT GRAPH ---
+        st.markdown("### 🚨 Critical Deficits (Below Target)")
         if usage_records:
             df_usage_summary = pd.DataFrame(usage_records)
             
             m_c1, m_c2, m_c3 = st.columns(3)
-            m_c1.metric("Total Rolls Below Target", f"{df_usage_summary['Rolls Consumed (Deficit)'].sum():,.1f} Rolls")
+            m_c1.metric("Total Rolls Below Target", f"{df_usage_summary['Rolls Consumed (Deficit)'].sum():,.1f} Rolls", delta_color="inverse")
             m_c2.metric("Total Surface Area Deficit", f"{df_usage_summary['Area Deficit (m²)'].sum():,.2f} m²")
             m_c3.metric("Total Required Mass Weight", f"{df_usage_summary['Est. Missing Weight (KG)'].sum():,.1f} KG")
             
-            st.write("")
-            st.dataframe(
-                df_usage_summary,
-                use_container_width=True,
-                hide_index=True
-            )
-
-            # --- VISUALIZATION: CONSUMPTION DEFICIT CHART ---
-            st.write("")
             df_chart = df_usage_summary.sort_values(by="Rolls Consumed (Deficit)", ascending=True)
-            
             fig_consumption = px.bar(
-                df_chart, 
-                x="Rolls Consumed (Deficit)", 
-                y="Material", 
-                orientation='h',
+                df_chart, x="Rolls Consumed (Deficit)", y="Material", orientation='h',
                 title="Total Material Volume Below Target (Rolls Consumed)",
                 labels={"Rolls Consumed (Deficit)": "Rolls Below Target", "Material": "Material Description"},
-                color="Rolls Consumed (Deficit)",
-                color_continuous_scale="Reds"
+                color="Rolls Consumed (Deficit)", color_continuous_scale="Reds"
             )
-            
-            fig_consumption.update_layout(
-                showlegend=False,
-                height=max(300, len(df_chart) * 35),
-                margin=dict(l=5, r=5, t=40, b=20)
-            )    
-            
+            fig_consumption.update_layout(showlegend=False, height=max(250, len(df_chart) * 35), margin=dict(l=5, r=5, t=40, b=20))    
             st.plotly_chart(fig_consumption, use_container_width=True)
         else:
-            st.success("✨ Optimal Stock Levels Maintained! All items meet or exceed targets.")
+            st.success("✨ Optimal Stock Levels Maintained! No items are currently in deficit.")
 
+        # --- DISPLAY BUFFER GRAPH ---
+        st.write("")
+        st.markdown("### 🟢 Healthy Runways (Safety Stock Buffers)")
+        if buffer_records:
+            df_buffer_summary = pd.DataFrame(buffer_records)
+            
+            b_c1, b_c2, b_c3 = st.columns(3)
+            b_c1.metric("Total Excess Rolls", f"{df_buffer_summary['Excess Rolls (Buffer)'].sum():,.1f} Rolls")
+            b_c2.metric("Total Surplus Area", f"{df_buffer_summary['Surplus Area (m²)'].sum():,.2f} m²")
+            b_c3.metric("Total Buffer Weight", f"{df_buffer_summary['Buffer Weight (KG)'].sum():,.1f} KG")
+            
+            df_buf_chart = df_buffer_summary.sort_values(by="Excess Rolls (Buffer)", ascending=True)
+            fig_buffer = px.bar(
+                df_buf_chart, x="Excess Rolls (Buffer)", y="Material", orientation='h',
+                title="Available Safety Stock Buffers (Rolls Above Target Limit)",
+                labels={"Excess Rolls (Buffer)": "Extra Rolls on Hand", "Material": "Material Description"},
+                color="Excess Rolls (Buffer)", color_continuous_scale="Greens" # Green gradient for healthy stock
+            )
+            fig_buffer.update_layout(showlegend=False, height=max(250, len(df_buf_chart) * 35), margin=dict(l=5, r=5, t=40, b=20))    
+            st.plotly_chart(fig_buffer, use_container_width=True)
+        else:
+            st.info("No items currently exceed safety targets. Runways are operating precisely at baseline targets.")
 # --- MODE 4: RECEIVE GOODS ---
 elif app_mode == "🚛 Receive Goods (KPark)":
     st.title("🚛 Goods Receiving (KPark)")
