@@ -671,7 +671,7 @@ elif app_mode == "📈 Stock Trends":
                 barmode="group",
                 title=f"Material Stock Allocation Matrix for the Last 3 Months at {selected_site}",
                 labels={"Total Rolls": "Total Quantity (Equivalent Rolls)", "Month": "Historical Month"},
-                color_discrete_sequence=px.colors.qualitative.Spread
+                color_discrete_sequence=px.colors.qualitative.spread
             )
             fig_history.update_layout(xaxis_title="Timeline", yyaxis_title="Volume (Rolls)")
             st.plotly_chart(fig_history, use_container_width=True)
