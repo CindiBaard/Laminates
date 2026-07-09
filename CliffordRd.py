@@ -691,6 +691,70 @@ elif app_mode == "📈 Stock Trends":
         else:
             st.warning("No historical column data matches found for the selected timeline.")
 
+# === FEATURE 6: COMBINED 3-MONTH MULTI-SITE ANALYTICS ===
+    st.divider()
+    st.subheader("🌐 Global 3-Month Cross-Warehouse Summary")
+    st.caption("Aggregates equivalent roll inventory across CliffordRd, KPark, and HarrisDrive for the last 3 months.")
+
+    if st.button("📊 Calculate Global 3-Month Multi-Site Volume"):
+        # 1. Determine the past 3 months based on selection
+        current_idx = months.index(selected_month)
+        past_months = [months[(current_idx - i) % 12] for i in range(1, 4)]
+        
+        global_history_records = []
+        
+        for index, row in st.session_state.df.iterrows():
+            mat_name = str(row["Material"]).strip()
+            rop_factor = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
+            
+            for m in past_months:
+                total_m_rolls = 0.0
+                
+                # Aggregate across all warehouses for the given month
+                for site in site_options:
+                    site_rolls_col = f"{site}_Rolls {m}"
+                    site_pallets_col = f"{site}_Pallets {m}"
+                    
+                    s_rolls = pd.to_numeric(row.get(site_rolls_col, 0.0), errors='coerce') or 0.0
+                    s_pallets = pd.to_numeric(row.get(site_pallets_col, 0.0), errors='coerce') or 0.0
+                    
+                    # Convert to equivalent loose rolls
+                    total_m_rolls += s_rolls + (s_pallets * rop_factor)
+                
+                global_history_records.append({
+                    "Material": mat_name,
+                    "Month": m,
+                    "Total Multi-Site Rolls": round(total_m_rolls, 1)
+                })
+        
+        if global_history_records:
+            df_global = pd.DataFrame(global_history_records)
+            
+            # Keep chronological order reading left-to-right
+            df_global["Month"] = pd.Categorical(df_global["Month"], categories=reversed(past_months), ordered=True)
+            df_global = df_global.sort_values(["Material", "Month"])
+            
+            # 2. Render Global Plotly Bar Chart
+            fig_global = px.bar(
+                df_global,
+                x="Material",
+                y="Total Multi-Site Rolls",
+                color="Month",
+                barmode="group",
+                title=f"Total Network Stock Allocation Over Time (Last 3 Months Combined)",
+                labels={"Total Multi-Site Rolls": "Total Network Volume (Rolls)", "Material": "Material Substrate"},
+                color_discrete_sequence=px.colors.qualitative.Safe
+            )
+            
+            st.plotly_chart(fig_global, width="stretch")
+            
+            # 3. Pivot table view for clean business reporting
+            with st.expander("📋 View Consolidated Network Matrix Table", expanded=False):
+                df_pivot = df_global.pivot(index="Material", columns="Month", values="Total Multi-Site Rolls")
+                st.dataframe(df_pivot, width="stretch")
+        else:
+            st.warning("No dynamic column structures found matching historical configurations.")
+            
 # --- MODE 4: RECEIVE GOODS ---
 elif app_mode == "🚛 Receive Goods (KPark)":
     st.title("🚛 Goods Receiving (KPark)")
