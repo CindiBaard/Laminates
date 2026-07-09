@@ -673,7 +673,8 @@ elif app_mode == "📈 Stock Trends":
                 labels={"Total Rolls": "Total Quantity (Equivalent Rolls)", "Month": "Historical Month"},
                 color_discrete_sequence=px.colors.qualitative.G10
             )
-            fig_history.update_layout(xaxis_title="Timeline", yyaxis_title="Volume (Rolls)")
+            #fig_history.update_layout(xaxis_title="Timeline", yaxis_title="Volume (Rolls)")
+            
             st.plotly_chart(fig_history, use_container_width=True)
             
             # 3. Data Table view
