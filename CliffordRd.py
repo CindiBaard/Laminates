@@ -615,16 +615,25 @@ elif app_mode == "📈 Stock Trends":
         else:
             st.info("No items currently exceed safety targets. Runways are operating precisely at baseline targets.")
 
-# === FEATURE 5: THREE-MONTH HISTORICAL USAGE ANALYTICS ===
+# === NEW: CONFIGURABLE REPORTING UNIT SELECTION ===
     st.divider()
-    st.subheader("🗓️ Rolling 3-Month Material History")
-    st.caption("Displays stock metrics for the three months preceding the currently selected month.")
+    st.subheader("⚙️ Analytics Display Preferences")
+    reporting_unit = st.radio(
+        "Select Reporting Display Unit:", 
+        ["Rolls", "Pallets", "Square Meters (m²)"], 
+        horizontal=True
+    )
 
-    if st.button("📊 Calculate Past 3 Months Data"):
-        # 1. Determine the past 3 months based on selection
-        current_idx = months.index(selected_month)
-        past_months = [months[(current_idx - i) % 12] for i in range(1, 4)]
-        
+    # Determine past 3 months based on selection
+    current_idx = months.index(selected_month)
+    past_months = [months[(current_idx - i) % 12] for i in range(1, 4)]
+
+
+    # === FEATURE 5: THREE-MONTH HISTORICAL SITE ANALYTICS ===
+    st.subheader(f"🗓️ Rolling 3-Month History ({selected_site})")
+    st.caption(f"Displays stock metrics configured in **{reporting_unit}** for the three months preceding {selected_month}.")
+
+    if st.button(f"📊 Calculate Past 3 Months for {selected_site}"):
         history_records = []
         
         for index, row in st.session_state.df.iterrows():
@@ -634,83 +643,61 @@ elif app_mode == "📈 Stock Trends":
             m2p_factor = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0.0
             m2_per_roll = m2p_factor / rop_factor if rop_factor > 0 else 0.0
             
-            # Loop backwards through the previous 3 months
             for m in past_months:
                 site_rolls_col = f"{selected_site}_Rolls {m}"
                 site_pallets_col = f"{selected_site}_Pallets {m}"
                 
-                # Safely parse values if the columns exist in the DataFrame
                 s_rolls = pd.to_numeric(row.get(site_rolls_col, 0.0), errors='coerce') or 0.0
                 s_pallets = pd.to_numeric(row.get(site_pallets_col, 0.0), errors='coerce') or 0.0
                 
-                # Convert everything to equivalent total rolls for uniform comparison
-                total_equivalent_rolls = s_rolls + (s_pallets * rop_factor)
-                total_m2 = (s_pallets * m2p_factor) + (s_rolls * m2_per_roll)
+                # Dynamic Conversion Logic Matrix
+                if reporting_unit == "Rolls":
+                    converted_val = s_rolls + (s_pallets * rop_factor)
+                elif reporting_unit == "Pallets":
+                    converted_val = s_pallets + (s_rolls / rop_factor) if rop_factor > 0 else 0.0
+                else:  # Square Meters
+                    converted_val = (s_pallets * m2p_factor) + (s_rolls * m2_per_roll)
                 
                 history_records.append({
                     "Material": mat_name,
                     "Code": item_code,
                     "Month": m,
-                    "Total Rolls": round(total_equivalent_rolls, 1),
-                    "Total Area (m²)": round(total_m2, 2)
+                    "Value": round(converted_val, 2)
                 })
         
         if history_records:
             df_history = pd.DataFrame(history_records)
-            
-            # Reversing order so it reads left-to-right chronologically
             df_history["Month"] = pd.Categorical(df_history["Month"], categories=reversed(past_months), ordered=True)
             df_history = df_history.sort_values(["Material", "Month"])
             
-            # 2. Render Plotly Bar Chart
             fig_history = px.bar(
-                df_history, 
-                x="Month", 
-                y="Total Rolls", 
-                color="Material", 
-                barmode="group",
-                title=f"Material Stock Allocation Matrix for the Last 3 Months at {selected_site}",
-                labels={"Total Rolls": "Total Quantity (Equivalent Rolls)", "Month": "Historical Month"},
+                df_history, x="Month", y="Value", color="Material", barmode="group",
+                title=f"Material Stock History ({reporting_unit}) at {selected_site}",
+                labels={"Value": f"Quantity ({reporting_unit})", "Month": "Historical Timeline"},
                 color_discrete_sequence=px.colors.qualitative.G10
             )
-            #fig_history.update_layout(xaxis_title="Timeline", yaxis_title="Volume (Rolls)")
-            
-            st.plotly_chart(fig_history, use_container_width=True)
-            
-            # 3. Data Table view
-            with st.expander("📋 View Detailed Historical Data Table", expanded=False):
-                st.dataframe(
-                    df_history,
-                    column_config={
-                        "Total Rolls": st.column_config.NumberColumn("On-Hand Vol (Rolls)", format="%.1f"),
-                        "Total Area (m²)": st.column_config.NumberColumn("Total Area (m²)", format="%.2f")
-                    },
-                    use_container_width=True,
-                    hide_index=True
-                )
+            st.plotly_chart(fig_history, width="stretch")
         else:
-            st.warning("No historical column data matches found for the selected timeline.")
+            st.warning("No structural profile matching layout configurations found.")
 
-# === FEATURE 6: COMBINED 3-MONTH MULTI-SITE ANALYTICS ===
+
+    # === FEATURE 6: COMBINED 3-MONTH GLOBAL MULTI-SITE ANALYTICS ===
     st.divider()
     st.subheader("🌐 Global 3-Month Cross-Warehouse Summary")
-    st.caption("Aggregates equivalent roll inventory across CliffordRd, KPark, and HarrisDrive for the last 3 months.")
+    st.caption(f"Aggregates total network volume metrics in **{reporting_unit}** across all sites.")
 
-    if st.button("📊 Calculate Global 3-Month Multi-Site Volume"):
-        # 1. Determine the past 3 months based on selection
-        current_idx = months.index(selected_month)
-        past_months = [months[(current_idx - i) % 12] for i in range(1, 4)]
-        
+    if st.button("📊 Calculate Global Multi-Site Volume"):
         global_history_records = []
         
         for index, row in st.session_state.df.iterrows():
             mat_name = str(row["Material"]).strip()
             rop_factor = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
+            m2p_factor = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0.0
+            m2_per_roll = m2p_factor / rop_factor if rop_factor > 0 else 0.0
             
             for m in past_months:
-                total_m_rolls = 0.0
+                total_converted_network = 0.0
                 
-                # Aggregate across all warehouses for the given month
                 for site in site_options:
                     site_rolls_col = f"{site}_Rolls {m}"
                     site_pallets_col = f"{site}_Pallets {m}"
@@ -718,154 +705,36 @@ elif app_mode == "📈 Stock Trends":
                     s_rolls = pd.to_numeric(row.get(site_rolls_col, 0.0), errors='coerce') or 0.0
                     s_pallets = pd.to_numeric(row.get(site_pallets_col, 0.0), errors='coerce') or 0.0
                     
-                    # Convert to equivalent loose rolls
-                    total_m_rolls += s_rolls + (s_pallets * rop_factor)
+                    # Convert to target metric per site before adding to total sum
+                    if reporting_unit == "Rolls":
+                        total_converted_network += s_rolls + (s_pallets * rop_factor)
+                    elif reporting_unit == "Pallets":
+                        total_converted_network += s_pallets + (s_rolls / rop_factor) if rop_factor > 0 else 0.0
+                    else:  # Square Meters
+                        total_converted_network += (s_pallets * m2p_factor) + (s_rolls * m2_per_roll)
                 
                 global_history_records.append({
                     "Material": mat_name,
                     "Month": m,
-                    "Total Multi-Site Rolls": round(total_m_rolls, 1)
+                    "Global Value": round(total_converted_network, 2)
                 })
         
         if global_history_records:
             df_global = pd.DataFrame(global_history_records)
-            
-            # Keep chronological order reading left-to-right
             df_global["Month"] = pd.Categorical(df_global["Month"], categories=reversed(past_months), ordered=True)
             df_global = df_global.sort_values(["Material", "Month"])
             
-            # 2. Render Global Plotly Bar Chart
             fig_global = px.bar(
-                df_global,
-                x="Material",
-                y="Total Multi-Site Rolls",
-                color="Month",
-                barmode="group",
-                title=f"Total Network Stock Allocation Over Time (Last 3 Months Combined)",
-                labels={"Total Multi-Site Rolls": "Total Network Volume (Rolls)", "Material": "Material Substrate"},
+                df_global, x="Material", y="Global Value", color="Month", barmode="group",
+                title=f"Total Dynamic Network Volume Over Time ({reporting_unit})",
+                labels={"Global Value": f"Network Sum ({reporting_unit})", "Material": "Material Type"},
                 color_discrete_sequence=px.colors.qualitative.Safe
             )
-            
             st.plotly_chart(fig_global, width="stretch")
             
-            # 3. Pivot table view for clean business reporting
             with st.expander("📋 View Consolidated Network Matrix Table", expanded=False):
-                df_pivot = df_global.pivot(index="Material", columns="Month", values="Total Multi-Site Rolls")
+                df_pivot = df_global.pivot(index="Material", columns="Month", values="Global Value")
                 st.dataframe(df_pivot, width="stretch")
-        else:
-            st.warning("No dynamic column structures found matching historical configurations.")
-            
-# --- MODE 4: RECEIVE GOODS ---
-elif app_mode == "🚛 Receive Goods (KPark)":
-    st.title("🚛 Goods Receiving (KPark)")
-    st.subheader("📥 Process Inbound Substrate Shipments")
-
-    client = get_gspread_client()
-    try:
-        # 1. Fetch current pending orders to see what can be received
-        pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
-        pending_data = pending_sheet.get_all_records()
-        
-        if not pending_data:
-            st.info("✨ No pending orders found in the pipeline to receive.")
-        else:
-            df_pending = pd.DataFrame(pending_data)
-            df_pending.columns = [str(c).strip() for c in df_pending.columns]
-            
-            # Create a clean label for a dropdown selection
-            df_pending["Dropdown_Label"] = df_pending.apply(
-                lambda r: f"{r['Material']} | Pallets: {r.get('Pending_Pallets', 0)} | Rolls: {r.get('Pending_Rolls', 0)} | Notes: {r.get('Notes', '')}", 
-                axis=1
-            )
-            
-            st.markdown("### 1. Select Incoming Shipment")
-            selected_order_label = st.selectbox("Choose a pending line item to receive:", df_pending["Dropdown_Label"].tolist())
-            
-            # Extract the selected row's data
-            selected_row = df_pending[df_pending["Dropdown_Label"] == selected_order_label].iloc[0]
-            selected_material = str(selected_row["Material"]).strip()
-            pending_index = df_pending[df_pending["Dropdown_Label"] == selected_order_label].index[0]
-            
-            # Read counts safely
-            p_to_receive = float(safe_extract_numeric(pd.Series([selected_row.get("Pending_Pallets", 0)]))[0])
-            r_to_receive = float(safe_extract_numeric(pd.Series([selected_row.get("Pending_Rolls", 0)]))[0])
-            
-            # Display summary of what is being processed
-            col_rec1, col_rec2 = st.columns(2)
-            with col_rec1:
-                st.metric("Pallets to Add", f"{p_to_receive:.1f}")
-            with col_rec2:
-                st.metric("Loose Rolls to Add", f"{r_to_receive:.1f}")
-                
-            st.markdown("### 2. Finalize Intake Allocation")
-            st.caption(f"Clicking the button below will remove this line item from 'Pending_Orders' and automatically add these quantities into your active **KPark** {selected_month} stock ledger counts.")
-            
-            if st.button("🚛 Accept Delivery & Update Stock Sheets", type="primary"):
-                with st.spinner("Processing intake manifests..."):
-                    # 2. Update Main Inventory Sheet
-                    main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
-                    main_data = main_sheet.get_all_records()
-                    df_main = pd.DataFrame(main_data)
-                    df_main.columns = [str(c).strip() for c in df_main.columns]
-                    
-                    # Target columns for KPark site
-                    kpark_pallet_col = f"KPark_Pallets {selected_month}"
-                    kpark_roll_col = f"KPark_Rolls {selected_month}"
-                    kpark_square_col = f"KPark_SquareM {selected_month}"
-                    
-                    # Find matching row index in main sheet
-                    match_mask = df_main["Material"].str.strip() == selected_material
-                    if not df_main[match_mask].empty:
-                        main_idx = df_main[match_mask].index[0]
-                        row_num_in_sheet = main_idx + 2 # account for headers
-                        
-                        # Fetch conversion ratios
-                        rop_val = pd.to_numeric(df_main.iloc[main_idx]["Rolls_on_Pallet"], errors='coerce') or 1.0
-                        m2p_val = pd.to_numeric(df_main.iloc[main_idx]["m_Square_per_pallet"], errors='coerce') or 0.0
-                        m2_per_roll = m2p_val / rop_val if rop_val > 0 else 0.0
-                        
-                        # Get current stock allocations on the floor
-                        current_pallets = pd.to_numeric(df_main.iloc[main_idx].get(kpark_pallet_col, 0.0), errors='coerce') or 0.0
-                        current_rolls = pd.to_numeric(df_main.iloc[main_idx].get(kpark_roll_col, 0.0), errors='coerce') or 0.0
-                        
-                        # Add new inventory amounts
-                        new_pallets = current_pallets + p_to_receive
-                        new_rolls = current_rolls + r_to_receive
-                        
-                        # Balance loose rolls into full pallets if they exceed standard configuration metrics
-                        if new_rolls >= rop_val:
-                            extra_pallets = int(new_rolls // rop_val)
-                            new_pallets += extra_pallets
-                            new_rolls = new_rolls % rop_val
-                            
-                        new_square_m = round((new_pallets * m2p_val) + (new_rolls * m2_per_roll), 2)
-                        
-                        # Batch update cell values on main sheet
-                        pallet_col_idx = df_main.columns.get_loc(kpark_pallet_col) + 1
-                        roll_col_idx = df_main.columns.get_loc(kpark_roll_col) + 1
-                        square_col_idx = df_main.columns.get_loc(kpark_square_col) + 1
-                        
-                        main_sheet.update_cells([
-                            gspread.cell.Cell(row=row_num_in_sheet, col=pallet_col_idx, value=float(new_pallets)),
-                            gspread.cell.Cell(row=row_num_in_sheet, col=roll_col_idx, value=float(new_rolls)),
-                            gspread.cell.Cell(row=row_num_in_sheet, col=square_col_idx, value=float(new_square_m))
-                        ])
-                        
-                        # 3. Strip line item out of the pending log tracker
-                        # Row index starts at 2, add pending_index
-                        pending_sheet.delete_rows(int(pending_index) + 2)
-                        
-                        # Reset internal stream memory states
-                        if 'df' in st.session_state:
-                            del st.session_state['df']
-                            
-                        st.success(f"✅ Recieved successfully! {selected_material} has been updated under KPark inventory manifests.")
-                        st.rerun()
-                    else:
-                        st.error(f"Could not find matching material profile name '{selected_material}' inside main tracking ledger tab setup.")
-                        
-    except Exception as e:
-        st.error(f"Inventory intake process failure: {e}")
     
 # --- MODE 5: PENDING ORDER DASHBOARD ---
 elif app_mode == "📋 View Pending Orders":
