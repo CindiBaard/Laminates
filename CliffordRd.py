@@ -772,7 +772,122 @@ elif app_mode == "📈 Stock Trends":
             with st.expander("📋 View Consolidated Network Matrix Table", expanded=False):
                 df_pivot = df_global.pivot(index="Material", columns="Month", values="Global Value")
                 st.dataframe(df_pivot, width="stretch")
+        else:
+            st.warning("No dynamic column structures found matching historical configurations.")
+
+# --- MODE 4: RECEIVE GOODS ---
+elif app_mode == "🚛 Receive Goods (KPark)":
+    st.title("🚛 Goods Receiving (KPark)")
+    st.subheader("📥 Process Inbound Substrate Shipments")
     
+    client = get_gspread_client()
+    try:
+        # 1. Fetch current pending orders to see what can be received
+        pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
+        pending_data = pending_sheet.get_all_records()
+        
+        if not pending_data:
+            st.info("✨ No pending orders found in the pipeline to receive.")
+        else:
+            df_pending = pd.DataFrame(pending_data)
+            df_pending.columns = [str(c).strip() for c in df_pending.columns]
+            
+            # Create a clean label for a dropdown selection
+            df_pending["Dropdown_Label"] = df_pending.apply(
+                lambda r: f"{r['Material']} | Pallets: {r.get('Pending_Pallets', 0)} | Rolls: {r.get('Pending_Rolls', 0)} | Notes: {r.get('Notes', '')}", 
+                axis=1
+            )
+            
+            st.markdown("### 1. Select Incoming Shipment")
+            selected_order_label = st.selectbox("Choose a pending line item to receive:", df_pending["Dropdown_Label"].tolist())
+            
+            # Extract the selected row's data
+            selected_row = df_pending[df_pending["Dropdown_Label"] == selected_order_label].iloc[0]
+            selected_material = str(selected_row["Material"]).strip()
+            pending_index = df_pending[df_pending["Dropdown_Label"] == selected_order_label].index[0]
+            
+            # Read counts safely
+            p_to_receive = float(safe_extract_numeric(pd.Series([selected_row.get("Pending_Pallets", 0)]))[0])
+            r_to_receive = float(safe_extract_numeric(pd.Series([selected_row.get("Pending_Rolls", 0)]))[0])
+            
+            # Display summary of what is being processed
+            col_rec1, col_rec2 = st.columns(2)
+            with col_rec1:
+                st.metric("Pallets to Add", f"{p_to_receive:.1f}")
+            with col_rec2:
+                st.metric("Loose Rolls to Add", f"{r_to_receive:.1f}")
+                
+            st.markdown("### 2. Finalize Intake Allocation")
+            st.caption(f"Clicking the button below will remove this line item from 'Pending_Orders' and automatically add these quantities into your active **KPark** {selected_month} stock ledger counts.")
+            
+            if st.button("🚛 Accept Delivery & Update Stock Sheets", type="primary"):
+                with st.spinner("Processing intake manifests..."):
+                    # 2. Update Main Inventory Sheet
+                    main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+                    main_data = main_sheet.get_all_records()
+                    df_main = pd.DataFrame(main_data)
+                    df_main.columns = [str(c).strip() for c in df_main.columns]
+                    
+                    # Target columns for KPark site
+                    kpark_pallet_col = f"KPark_Pallets {selected_month}"
+                    kpark_roll_col = f"KPark_Rolls {selected_month}"
+                    kpark_square_col = f"KPark_SquareM {selected_month}"
+                    
+                    # Find matching row index in main sheet
+                    match_mask = df_main["Material"].str.strip() == selected_material
+                    if not df_main[match_mask].empty:
+                        main_idx = df_main[match_mask].index[0]
+                        row_num_in_sheet = main_idx + 2 # account for headers
+                        
+                        # Fetch conversion ratios
+                        rop_val = pd.to_numeric(df_main.iloc[main_idx]["Rolls_on_Pallet"], errors='coerce') or 1.0
+                        m2p_val = pd.to_numeric(df_main.iloc[main_idx]["m_Square_per_pallet"], errors='coerce') or 0.0
+                        m2_per_roll = m2p_val / rop_val if rop_val > 0 else 0.0
+                        
+                        # Get current stock allocations on the floor
+                        current_pallets = pd.to_numeric(df_main.iloc[main_idx].get(kpark_pallet_col, 0.0), errors='coerce') or 0.0
+                        current_rolls = pd.to_numeric(df_main.iloc[main_idx].get(kpark_roll_col, 0.0), errors='coerce') or 0.0
+                        
+                        # Add new inventory amounts
+                        new_pallets = current_pallets + p_to_receive
+                        new_rolls = current_rolls + r_to_receive
+                        
+                        # Balance loose rolls into full pallets if they exceed standard configuration metrics
+                        if new_rolls >= rop_val:
+                            extra_pallets = int(new_rolls // rop_val)
+                            new_pallets += extra_pallets
+                            new_rolls = new_rolls % rop_val
+                            
+                        new_square_m = round((new_pallets * m2p_val) + (new_rolls * m2_per_roll), 2)
+                        
+                        # Batch update cell values on main sheet
+                        pallet_col_idx = df_main.columns.get_loc(kpark_pallet_col) + 1
+                        roll_col_idx = df_main.columns.get_loc(kpark_roll_col) + 1
+                        square_col_idx = df_main.columns.get_loc(kpark_square_col) + 1
+                        
+                        main_sheet.update_cells([
+                            gspread.cell.Cell(row=row_num_in_sheet, col=pallet_col_idx, value=float(new_pallets)),
+                            gspread.cell.Cell(row=row_num_in_sheet, col=roll_col_idx, value=float(new_rolls)),
+                            gspread.cell.Cell(row=row_num_in_sheet, col=square_col_idx, value=float(new_square_m))
+                        ])
+                        
+                        # 3. Strip line item out of the pending log tracker
+                        # Row index starts at 2, add pending_index
+                        pending_sheet.delete_rows(int(pending_index) + 2)
+                        
+                        # Reset internal stream memory states
+                        if 'df' in st.session_state:
+                            del st.session_state['df']
+                            
+                        st.success(f"✅ Received successfully! {selected_material} has been updated under KPark inventory manifests.")
+                        st.rerun()
+                    else:
+                        st.error(f"Could not find matching material profile name '{selected_material}' inside main tracking ledger tab setup.")
+                        
+    except Exception as e:
+        st.error(f"Inventory intake process failure: {e}")
+
+   
 # --- MODE 5: PENDING ORDER DASHBOARD ---
 elif app_mode == "📋 View Pending Orders":
     st.title("📋 Current Pending Orders")
