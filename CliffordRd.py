@@ -614,6 +614,82 @@ elif app_mode == "📈 Stock Trends":
             st.plotly_chart(fig_buffer, use_container_width=True)
         else:
             st.info("No items currently exceed safety targets. Runways are operating precisely at baseline targets.")
+
+# === FEATURE 5: THREE-MONTH HISTORICAL USAGE ANALYTICS ===
+    st.divider()
+    st.subheader("🗓️ Rolling 3-Month Material History")
+    st.caption("Displays stock metrics for the three months preceding the currently selected month.")
+
+    if st.button("📊 Calculate Past 3 Months Data"):
+        # 1. Determine the past 3 months based on selection
+        current_idx = months.index(selected_month)
+        past_months = [months[(current_idx - i) % 12] for i in range(1, 4)]
+        
+        history_records = []
+        
+        for index, row in st.session_state.df.iterrows():
+            mat_name = str(row["Material"]).strip()
+            item_code = str(row["Code"])
+            rop_factor = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
+            m2p_factor = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0.0
+            m2_per_roll = m2p_factor / rop_factor if rop_factor > 0 else 0.0
+            
+            # Loop backwards through the previous 3 months
+            for m in past_months:
+                site_rolls_col = f"{selected_site}_Rolls {m}"
+                site_pallets_col = f"{selected_site}_Pallets {m}"
+                
+                # Safely parse values if the columns exist in the DataFrame
+                s_rolls = pd.to_numeric(row.get(site_rolls_col, 0.0), errors='coerce') or 0.0
+                s_pallets = pd.to_numeric(row.get(site_pallets_col, 0.0), errors='coerce') or 0.0
+                
+                # Convert everything to equivalent total rolls for uniform comparison
+                total_equivalent_rolls = s_rolls + (s_pallets * rop_factor)
+                total_m2 = (s_pallets * m2p_factor) + (s_rolls * m2_per_roll)
+                
+                history_records.append({
+                    "Material": mat_name,
+                    "Code": item_code,
+                    "Month": m,
+                    "Total Rolls": round(total_equivalent_rolls, 1),
+                    "Total Area (m²)": round(total_m2, 2)
+                })
+        
+        if history_records:
+            df_history = pd.DataFrame(history_records)
+            
+            # Reversing order so it reads left-to-right chronologically
+            df_history["Month"] = pd.Categorical(df_history["Month"], categories=reversed(past_months), ordered=True)
+            df_history = df_history.sort_values(["Material", "Month"])
+            
+            # 2. Render Plotly Bar Chart
+            fig_history = px.bar(
+                df_history, 
+                x="Month", 
+                y="Total Rolls", 
+                color="Material", 
+                barmode="group",
+                title=f"Material Stock Allocation Matrix for the Last 3 Months at {selected_site}",
+                labels={"Total Rolls": "Total Quantity (Equivalent Rolls)", "Month": "Historical Month"},
+                color_discrete_sequence=px.colors.qualitative.Spread
+            )
+            fig_history.update_layout(xaxis_title="Timeline", yyaxis_title="Volume (Rolls)")
+            st.plotly_chart(fig_history, use_container_width=True)
+            
+            # 3. Data Table view
+            with st.expander("📋 View Detailed Historical Data Table", expanded=False):
+                st.dataframe(
+                    df_history,
+                    column_config={
+                        "Total Rolls": st.column_config.NumberColumn("On-Hand Vol (Rolls)", format="%.1f"),
+                        "Total Area (m²)": st.column_config.NumberColumn("Total Area (m²)", format="%.2f")
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+        else:
+            st.warning("No historical column data matches found for the selected timeline.")
+
 # --- MODE 4: RECEIVE GOODS ---
 elif app_mode == "🚛 Receive Goods (KPark)":
     st.title("🚛 Goods Receiving (KPark)")
