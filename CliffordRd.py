@@ -347,34 +347,71 @@ if app_mode == "📦 Stock Management":
 # --- MODE 3: TRENDS & MONTHLY BREAKDOWN ---
 elif app_mode == "📈 Stock Trends":
     st.title("📈 Stock Level Analytics")
+
+    st.caption(f"Reviewing inventory allocations and rolling trends for target timeline: **{selected_month}**")
+
+    # =========================================================================
+    # ⚙️ GLOBAL UNIT SELECTOR (Applies to current stock view & historical charts)
+    # =========================================================================
+    st.info("💡 Use the selector below to toggle how all inventory metrics are rendered across this dashboard page.")
+    reporting_unit = st.radio(
+        "Select Reporting Display Unit:", 
+        ["Rolls", "Pallets", "Square Meters (m²)"], 
+        horizontal=True,
+        key="global_trend_reporting_unit"
+    )
     
-    # === FEATURE 1: COMBINED WAREHOUSE CHART ===
-    st.subheader(f"📊 Combined Warehouse Stock Breakdown ({selected_month})")
-    if st.button(f"🔄 Generate Combined Chart for {selected_month}"):
-        combined_data = []
-        for _, row in st.session_state.df.iterrows():
-            mat_name = str(row["Material"]).strip()
-            total_pallets, total_rolls = 0.0, 0.0
-            for site in site_options:
-                pallet_col = f"{site}_Pallets {selected_month}"
-                roll_col = f"{site}_Rolls {selected_month}"
-                if pallet_col in st.session_state.df.columns:
-                    try: total_pallets += float(str(row[pallet_col]).replace(',', '').strip()) if str(row[pallet_col]).strip() != "" else 0
-                    except: pass
-                if roll_col in st.session_state.df.columns:
-                    try: total_rolls += float(str(row[roll_col]).replace(',', '').strip()) if str(row[roll_col]).strip() != "" else 0
-                    except: pass
+# =========================================================================
+    # FEATURE 1: LIVE SITE STOCK LEVEL SUMMARY (Current Month)
+    # =========================================================================
+    st.subheader(f"📊 Warehouse Balances for {selected_site} ({selected_month})")
+    
+    current_stock_records = []
+    for index, row in st.session_state.df.iterrows():
+        mat_name = str(row["Material"]).strip()
+        item_code = str(row["Code"])
+        rop_factor = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
+        m2p_factor = pd.to_numeric(row["m_Square_per_pallet"], errors='coerce') or 0.0
+        m2_per_roll = m2p_factor / rop_factor if rop_factor > 0 else 0.0
+        
+        # Read raw on-hand balances for the current month
+        site_rolls_col = f"{selected_site}_Rolls {selected_month}"
+        site_pallets_col = f"{selected_site}_Pallets {selected_month}"
+        
+        s_rolls = pd.to_numeric(row.get(site_rolls_col, 0.0), errors='coerce') or 0.0
+        s_pallets = pd.to_numeric(row.get(site_pallets_col, 0.0), errors='coerce') or 0.0
+        
+        # Apply the conversion math based on user preference
+        if reporting_unit == "Rolls":
+            current_volume = s_rolls + (s_pallets * rop_factor)
+        elif reporting_unit == "Pallets":
+            current_volume = s_pallets + (s_rolls / rop_factor) if rop_factor > 0 else 0.0
+        else:  # Square Meters (m²)
+            current_volume = (s_pallets * m2p_factor) + (s_rolls * m2_per_roll)
             
-            combined_data.append({"Material": mat_name, "Unit Type": "Pallets", "Quantity": total_pallets})
-            combined_data.append({"Material": mat_name, "Unit Type": "Rolls", "Quantity": total_rolls})
-            
-        df_combined = pd.DataFrame(combined_data)
-        fig_combined = px.bar(
-            df_combined, x="Material", y="Quantity", color="Unit Type", barmode="group",
-            title=f"Total Pallets & Rolls across All Warehouses ({selected_month})",
-            color_discrete_map={"Pallets": "#1f77b4", "Rolls": "#ff7f0e"}
-        )
-        st.plotly_chart(fig_combined, use_container_width=True)
+        current_stock_records.append({
+            "Material": mat_name,
+            "Code": item_code,
+            f"Stock Balance ({reporting_unit})": round(current_volume, 2)
+        })
+
+    df_current_stock = pd.DataFrame(current_stock_records)
+
+    # Render Bar Chart for Individual Material Types
+    fig_current = px.bar(
+        df_current_stock,
+        x="Material",
+        y=f"Stock Balance ({reporting_unit})",
+        color="Material",
+        title=f"On-Hand Stock Volumes by Material Type at {selected_site}",
+        labels={f"Stock Balance ({reporting_unit})": f"Available Stock ({reporting_unit})"},
+        color_discrete_sequence=px.colors.qualitative.Plotly
+    )
+    st.plotly_chart(fig_current, width="stretch")
+
+    # Data Grid View
+    with st.expander("📋 View Live Balance Sheet Data Grid", expanded=True):
+        st.dataframe(df_current_stock, width="stretch", hide_index=True)
 
     # === FEATURE 2: STANDALONE PENDING ORDERS BAR CHART ===
     st.divider()
