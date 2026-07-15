@@ -80,6 +80,19 @@ thresholds = {
 # --- MODE 1: STOCK MANAGEMENT ---
 if app_mode == "📦 Stock Management":
     st.title(f"📦 {selected_site} - {selected_month} Management")
+
+    # 1. DEFINE PERMISSIONS
+    ALLOWED_EDITORS = ["your_email@example.com", "colleague_email@example.com"]
+    
+    # Check if the user is authenticated on Streamlit Cloud
+    is_editor = False
+    if st.user.is_logged_in:
+        if st.user.email in ALLOWED_EDITORS:
+            is_editor = True
+
+    # Inform unauthorized users they are in read-only mode
+    if not is_editor:
+        st.warning("⚠️ You are in **Read-Only** mode. Only authorized users can edit quantities or save changes.")
     
     roll_col = f"{selected_site}_Rolls {selected_month}"
     pallet_col = f"{selected_site}_Pallets {selected_month}"
@@ -113,7 +126,8 @@ if app_mode == "📦 Stock Management":
         use_container_width=True, 
         hide_index=True, 
         column_config=col_config,
-        key="stock_editor"
+        key="stock_editor",
+        disabled=not is_editor  # <-- Add this: locks the whole grid if not an editor
     )
 
     reorder_needed = [] 
@@ -188,7 +202,7 @@ if app_mode == "📦 Stock Management":
     c1.metric("Total Order Weight", f"{total_est_weight_kg:,.0f} KG")
     c2.metric("Container Capacity", f"{(total_est_weight_kg/CONTAINER_LIMIT_KG)*100:.1f}%")
     with c3:
-        if st.button("💾 Save Counts to Sheet"):
+        if st.button("💾 Save Counts to Sheet", disabled=not is_editor):
             try:
                 client = get_gspread_client()
                 main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
@@ -313,7 +327,7 @@ if app_mode == "📦 Stock Management":
 
         input_notes = st.text_input("Procurement Notes / PO Number", placeholder="e.g., PO-100234, Supplier X")
 
-        if st.button("🚀 Commit to Pending Orders Pipeline", type="primary"):
+        if st.button("🚀 Commit to Pending Orders Pipeline", type="primary", disabled=not is_editor):
             if input_pallets == 0 and input_rolls == 0:
                 st.error("Please specify a valid quantity of Pallets or Rolls to log.")
             else:
