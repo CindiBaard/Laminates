@@ -84,11 +84,14 @@ if app_mode == "📦 Stock Management":
     # 1. DEFINE PERMISSIONS
     ALLOWED_EDITORS = ["your_email@example.com", "colleague_email@example.com"]
     
-    # Check if the user is authenticated on Streamlit Cloud
+    # Correct way to check email in Streamlit
     is_editor = False
-    if st.user.is_logged_in:
-        if st.user.email in ALLOWED_EDITORS:
-            is_editor = True
+    
+    # st.user.email is None if the user is not logged in or if running locally
+    user_email = st.user.get("email") 
+    
+    if user_email and user_email in ALLOWED_EDITORS:
+        is_editor = True
 
     # Inform unauthorized users they are in read-only mode
     if not is_editor:
