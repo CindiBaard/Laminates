@@ -77,21 +77,28 @@ thresholds = {
 }
 
 
-# --- MODE 1: STOCK MANAGEMENT ---
+--- MODE 1: STOCK MANAGEMENT ---
 if app_mode == "📦 Stock Management":
     st.title(f"📦 {selected_site} - {selected_month} Management")
 
-    # 1. DEFINE PERMISSIONS
-    ALLOWED_EDITORS = ["your_email@example.com", "colleague_email@example.com"]
+    # 1. Define your secure password (keep this safe!)
+    # You can change "BowlerSecure2026" to whatever password you want
+    SECRET_PASSWORD = "BowlerSecure2026" 
     
-    # Correct way to check email in Streamlit
-    is_editor = False
+    # 2. Add the password input field to the Sidebar
+    user_password = st.sidebar.text_input(
+        "🔑 Enter Editor Password", 
+        type="password", 
+        help="Type the password to unlock saving and editing features."
+    )
     
-    # st.user.email is None if the user is not logged in or if running locally
-    user_email = st.user.get("email") 
-    
-    if user_email and user_email in ALLOWED_EDITORS:
-        is_editor = True
+    # 3. Check if the password matches
+    is_editor = (user_password == SECRET_PASSWORD)
+
+    # 4. Show a visual warning if they are in read-only mode
+    if not is_editor:
+        st.sidebar.info("🔒 App is locked.")
+        st.warning("⚠️ You are in **Read-Only** mode. Please enter the password in the sidebar to edit or save counts.")
 
     # Inform unauthorized users they are in read-only mode
     if not is_editor:
