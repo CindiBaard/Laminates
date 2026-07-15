@@ -100,9 +100,6 @@ if app_mode == "📦 Stock Management":
         st.sidebar.info("🔒 App is locked.")
         st.warning("⚠️ You are in **Read-Only** mode. Please enter the password in the sidebar to edit or save counts.")
 
-    # Inform unauthorized users they are in read-only mode
-    if not is_editor:
-        st.warning("⚠️ You are in **Read-Only** mode. Only authorized users can edit quantities or save changes.")
     
     roll_col = f"{selected_site}_Rolls {selected_month}"
     pallet_col = f"{selected_site}_Pallets {selected_month}"
