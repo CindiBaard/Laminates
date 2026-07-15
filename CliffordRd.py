@@ -77,7 +77,7 @@ thresholds = {
 }
 
 
---- MODE 1: STOCK MANAGEMENT ---
+---# MODE 1: STOCK MANAGEMENT ---
 if app_mode == "📦 Stock Management":
     st.title(f"📦 {selected_site} - {selected_month} Management")
 
