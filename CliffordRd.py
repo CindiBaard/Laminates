@@ -205,11 +205,12 @@ if app_mode == "📦 Stock Management":
                     "Order m²": round(gap * (m2p if unit=="Pallets" else m2p/rp), 2)
                 })
 
-    c1, c2, c3 = st.columns(3)
+c1, c2, c3, c4 = st.columns(4)  # Expanded to 4 columns to fit the new button
     c1.metric("Total Order Weight", f"{total_est_weight_kg:,.0f} KG")
     c2.metric("Container Capacity", f"{(total_est_weight_kg/CONTAINER_LIMIT_KG)*100:.1f}%")
+    
     with c3:
-        if st.button("💾 Save Counts to Sheet", disabled=not is_editor):
+        if st.button("💾 Save Counts to Sheet", disabled=not is_editor, use_container_width=True):
             try:
                 client = get_gspread_client()
                 main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
@@ -270,6 +271,64 @@ if app_mode == "📦 Stock Management":
                 
             except Exception as e:
                 st.error(f"Save failed: {e}")
+
+    # --- NEW: AUTO ROLLER OVER FUNCTIONALITY ---
+    with c4:
+        if st.button("🔄 Roll Over to Next Month", disabled=not is_editor, use_container_width=True, help="Copies current month's ending balances directly into the next month's columns."):
+            current_month_idx = months.index(selected_month)
+            
+            if current_month_idx == 11:
+                st.error("Cannot automatically roll over past December. Please check system setup configuration for the next year cycle.")
+            else:
+                next_month = months[current_month_idx + 1]
+                
+                # Define destination columns
+                next_roll_col = f"{selected_site}_Rolls {next_month}"
+                next_pallet_col = f"{selected_site}_Pallets {next_month}"
+                next_square_col = f"{selected_site}_SquareM {next_month}"
+                
+                all_cols = list(st.session_state.df.columns)
+                
+                # Validation checking to verify if target columns exist in your sheet template
+                if next_roll_col not in all_cols or next_pallet_col not in all_cols or next_square_col not in all_cols:
+                    st.error(f"Missing target layout structure! Ensure columns for **{next_month}** exist in your Google Sheet.")
+                else:
+                    try:
+                        with st.spinner(f"Rolling totals forward to {next_month}..."):
+                            client = get_gspread_client()
+                            main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+                            
+                            next_month_cells = []
+                            
+                            # Fetch current month column index positions to fetch absolute cell rows
+                            next_roll_idx = all_cols.index(next_roll_col) + 1
+                            next_pallet_idx = all_cols.index(next_pallet_col) + 1
+                            next_square_idx = all_cols.index(next_square_col) + 1
+                            
+                            for idx, row in edited_df.iterrows():
+                                row_idx = idx + 2  # accounted for header offset
+                                
+                                # Pull exact numeric values currently evaluated in the data editor
+                                current_rolls = float(row.get(roll_col, 0.0))
+                                current_pallets = float(row.get(pallet_col, 0.0))
+                                current_square = float(row.get(square_col, 0.0))
+                                
+                                # Append structural cell mutations
+                                next_month_cells.append(gspread.cell.Cell(row=row_idx, col=next_roll_idx, value=current_rolls))
+                                next_month_cells.append(gspread.cell.Cell(row=row_idx, col=next_pallet_idx, value=current_pallets))
+                                next_month_cells.append(gspread.cell.Cell(row=row_idx, col=next_square_idx, value=current_square))
+                            
+                            # Execute atomic network write to bypass API quota throttling
+                            if next_month_cells:
+                                main_sheet.update_cells(next_month_cells)
+                                
+                            if 'df' in st.session_state:
+                                del st.session_state['df']
+                                
+                            st.success(f"Success! Balances rolled clean into **{next_month}**.")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Rollover update transaction dropped: {e}")
 
     if low_stock_alerts:
         with st.expander("🚩 View Low Stock Flags & Reorder Requirements", expanded=True):
