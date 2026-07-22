@@ -502,40 +502,50 @@ elif app_mode == "📈 Stock Trends":
         st.dataframe(df_current_stock, use_container_width=True, hide_index=True)
 
     st.divider()
-    st.subheader(f"⏳ Standalone Pending Orders Chart ({selected_month})")
-    if st.button(f"📊 Generate Standalone Pending Chart for {selected_month}"):
+    
+    # --- FIXED: PENDING ORDERS CHART LOADS AUTOMATICALLY WITHOUT A BUTTON WRAPPER ---
+    st.subheader(f"⏳ Standalone Pending Orders Pipeline Overview")
+    
+    try:
         client = get_gspread_client()
-        try:
-            pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
-            pending_data = pending_sheet.get_all_records()
+        pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
+        pending_data = pending_sheet.get_all_records()
+        
+        if pending_data:
+            df_pending = pd.DataFrame(pending_data)
+            df_pending.columns = [str(c).strip() for c in df_pending.columns]
             
-            if pending_data:
-                df_pending = pd.DataFrame(pending_data)
-                df_pending.columns = [str(c).strip() for c in df_pending.columns]
+            p_col = "Pending_Pallets"
+            r_col = "Pending_Rolls"
+            
+            if p_col in df_pending.columns and r_col in df_pending.columns:
+                df_pending[p_col] = safe_extract_numeric(df_pending[p_col])
+                df_pending[r_col] = safe_extract_numeric(df_pending[r_col])
                 
-                p_col = "Pending_Pallets"
-                r_col = "Pending_Rolls"
+                grouped_p = df_pending.groupby('Material', as_index=False)[[p_col, r_col]].sum()
                 
-                if p_col in df_pending.columns and r_col in df_pending.columns:
-                    df_pending[p_col] = safe_extract_numeric(df_pending[p_col])
-                    df_pending[r_col] = safe_extract_numeric(df_pending[r_col])
+                pending_graph_data = []
+                for _, p_row in grouped_p.iterrows():
+                    mat_name = p_row["Material"]
+                    pending_graph_data.append({"Material": mat_name, "Unit Type": "Pallets", "Quantity": float(p_row[p_col])})
+                    pending_graph_data.append({"Material": mat_name, "Unit Type": "Rolls", "Quantity": float(p_row[r_col])})
                     
-                    grouped_p = df_pending.groupby('Material', as_index=False)[[p_col, r_col]].sum()
-                    
-                    pending_graph_data = []
-                    for _, p_row in grouped_p.iterrows():
-                        mat_name = p_row["Material"]
-                        pending_graph_data.append({"Material": mat_name, "Unit Type": "Pallets", "Quantity": float(p_row[p_col])})
-                        pending_graph_data.append({"Material": mat_name, "Unit Type": "Rolls", "Quantity": float(p_row[r_col])})
-                        
-                    df_pending_graph = pd.DataFrame(pending_graph_data)
-                    fig_standalone_pending = px.bar(
-                        df_pending_graph, x="Material", y="Quantity", color="Unit Type", barmode="group",
-                        title="Pending Materials Outstanding (All Warehouses Combined)",
-                        color_discrete_map={"Pallets": "#2ca02c", "Rolls": "#9467bd"}
-                    )
-                    st.plotly_chart(fig_standalone_pending, use_container_width=True)
+                df_pending_graph = pd.DataFrame(pending_graph_data)
+                
+                fig_standalone_pending = px.bar(
+                    df_pending_graph, 
+                    x="Material", 
+                    y="Quantity", 
+                    color="Unit Type", 
+                    barmode="group",
+                    title="Pending Materials Outstanding (All Warehouses Combined)",
+                    color_discrete_map={"Pallets": "#2ca02c", "Rolls": "#9467bd"}
+                )
+                st.plotly_chart(fig_standalone_pending, use_container_width=True)
             else:
-                st.info("The 'Pending_Orders' sheet is currently empty.")
-        except Exception as e:
-            st.error(f"Could not read 'Pending_Orders' tab: {e}")
+                st.warning("⚠️ Pending_Orders sheet structure missing required 'Pending_Pallets' or 'Pending_Rolls' columns.")
+        else:
+            st.info("ℹ️ The 'Pending_Orders' tab is currently empty. No active procurement orders on file.")
+            
+    except Exception as e:
+        st.error(f"Could not load 'Pending_Orders' sheet data: {e}")
