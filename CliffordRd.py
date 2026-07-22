@@ -81,24 +81,44 @@ thresholds = {
 if app_mode == "📦 Stock Management":
     st.title(f"📦 {selected_site} - {selected_month} Management")
 
-    # 1. Define your secure password (keep this safe!)
-    # You can change "BowlerSecure2026" to whatever password you want
-    SECRET_PASSWORD = "BowlerSecure2026" 
-    
-    # 2. Add the password input field to the Sidebar
-    user_password = st.sidebar.text_input(
-        "🔑 Enter Editor Password", 
-        type="password", 
-        help="Type the password to unlock saving and editing features."
-    )
-    
-    # 3. Check if the password matches
-    is_editor = (user_password == SECRET_PASSWORD)
+# --- AUTHENTICATION MODULE (SINGLE PASSCODE IN SIDEBAR) ---
 
-    # 4. Show a visual warning if they are in read-only mode
-    if not is_editor:
-        st.sidebar.info("🔒 App is locked.")
-        st.warning("⚠️ You are in **Read-Only** mode. Please enter the password in the sidebar to edit or save counts.")
+# 1. Initialize authentication state
+if "is_authenticated" not in st.session_state:
+    st.session_state["is_authenticated"] = False
+
+# 2. Define your secure password
+SECRET_PASSWORD = "BowlerSecure2026" 
+
+# 3. Sidebar Authentication Controls
+if st.session_state["is_authenticated"]:
+    st.sidebar.success("🔓 Edit Access Granted")
+    if st.sidebar.button("🚪 Log Out"):
+        st.session_state["is_authenticated"] = False
+        st.rerun()
+else:
+    st.sidebar.info("🔒 App is locked.")
+    with st.sidebar.form("sidebar_login_form"):
+        user_password = st.text_input(
+            "🔑 Enter Editor Password", 
+            type="password", 
+            key="sidebar_passcode_input",
+            help="Type the password to unlock saving and editing features."
+        ).strip()
+        
+        if st.form_submit_button("Unlock"):
+            if user_password == SECRET_PASSWORD:
+                st.session_state["is_authenticated"] = True
+                st.rerun()
+            else:
+                st.sidebar.error("😕 Incorrect password.")
+
+# 4. Global Edit Access Flag
+is_editor = st.session_state["is_authenticated"]
+
+# 5. Show a visual warning on the main page if locked
+if not is_editor:
+    st.warning("⚠️ You are in **Read-Only** mode. Please enter the password in the sidebar to edit or save counts.")
 
     
     roll_col = f"{selected_site}_Rolls {selected_month}"
