@@ -327,7 +327,7 @@ if app_mode == "📦 Stock Management":
     # Determine current day of the month
     today = datetime.now()
     current_day = today.day
-    is_valid_transfer_window = current_day in [1, 2, 3]
+    is_valid_transfer_window = current_day in [1, 2, 3, 4, 5, 6, 7]
 
     # Target calculation display
     months_list = ["January", "February", "March", "April", "May", "June", 
