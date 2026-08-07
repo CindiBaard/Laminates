@@ -39,6 +39,54 @@ def load_data():
 def safe_extract_numeric(series):
     return series.astype(str).str.extract(r'([-+]?\d*\.\d+|\d+)')[0].astype(float).fillna(0.0)
 
+def transfer_stock_to_next_month(df, current_month_name):
+    """
+    Transfers current month stock quantities for all three sites 
+    (KPark, CliffordRd, HarrisDrive) to the subsequent month in Google Sheets.
+    """
+    # 1. Determine next month name
+    months_list = ["January", "February", "March", "April", "May", "June", 
+                   "July", "August", "September", "October", "November", "December"]
+    
+    current_idx = months_list.index(current_month_name)
+    next_month_name = months_list[(current_idx + 1) % 12]
+
+    # 2. Authenticate and retrieve main sheet
+    client = get_gspread_client()
+    main_sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+
+    sites = ["CliffordRd", "KPark", "HarrisDrive"]
+    suffixes = ["Rolls", "Pallets", "SquareM"]
+    
+    cells_to_update = []
+
+    # 3. Build update batch for each site and metric
+    for site in sites:
+        for suffix in suffixes:
+            curr_col_name = f"{site}_{suffix} {current_month_name}"
+            next_col_name = f"{site}_{suffix} {next_month_name}"
+
+            if curr_col_name in df.columns and next_col_name in df.columns:
+                next_col_idx = df.columns.get_loc(next_col_name) + 1
+
+                for idx, row in df.iterrows():
+                    row_idx = idx + 2  # 1-indexed + header row
+                    val = pd.to_numeric(row.get(curr_col_name, 0.0), errors='coerce') or 0.0
+                    
+                    cell = gspread.cell.Cell(row=row_idx, col=next_col_idx, value=float(val))
+                    cells_to_update.append(cell)
+
+    # 4. Write updates back to Google Sheet
+    if cells_to_update:
+        main_sheet.update_cells(cells_to_update)
+        return True, next_month_name
+    
+    return False, next_month_name
+
+# Helper function to extract numerical values safely from text strings
+def safe_extract_numeric(series):
+    return series.astype(str).str.extract(r'([-+]?\d*\.\d+|\d+)')[0].astype(float).fillna(0.0)
+
 # --- 3. SESSION STATE ---
 if 'df' not in st.session_state:
     try:
@@ -77,12 +125,11 @@ thresholds = {
 }
 
 
-#--- MODE 1: STOCK MANAGEMENT ---
+# --- MODE 1: STOCK MANAGEMENT ---
 if app_mode == "📦 Stock Management":
     st.title(f"📦 {selected_site} - {selected_month} Management")
 
     # 1. Define your secure password (keep this safe!)
-    # You can change "BowlerSecure2026" to whatever password you want
     SECRET_PASSWORD = "BowlerSecure2026" 
     
     # 2. Add the password input field to the Sidebar
@@ -134,7 +181,7 @@ if app_mode == "📦 Stock Management":
         hide_index=True, 
         column_config=col_config,
         key="stock_editor",
-        disabled=not is_editor  # <-- Add this: locks the whole grid if not an editor
+        disabled=not is_editor
     )
 
     reorder_needed = [] 
@@ -271,6 +318,52 @@ if app_mode == "📦 Stock Management":
             except Exception as e:
                 st.error(f"Save failed: {e}")
 
+    # =========================================================================
+    # 🔄 MONTHLY STOCK TRANSFER SECTION (INSERTED HERE)
+    # =========================================================================
+    st.divider()
+    st.subheader("🔄 Monthly Stock Roll-Forward")
+
+    # Determine current day of the month
+    today = datetime.now()
+    current_day = today.day
+    is_valid_transfer_window = current_day in [1, 2, 3]
+
+    # Target calculation display
+    months_list = ["January", "February", "March", "April", "May", "June", 
+                   "July", "August", "September", "October", "November", "December"]
+    next_month_target = months_list[(months_list.index(selected_month) + 1) % 12]
+
+    col_tr1, col_tr2 = st.columns([2, 1])
+
+    with col_tr1:
+        st.caption(
+            f"Transfers all current inventory totals for **KPark**, **CliffordRd**, and **HarrisDrive** "
+            f"from **{selected_month}** to **{next_month_target}**."
+        )
+        if not is_valid_transfer_window:
+            st.info(f"📅 Stock transfers are restricted to the **1st, 2nd, or 3rd** of the month. Today is day **{current_day}**.")
+
+    with col_tr2:
+        btn_disabled = not (is_editor and is_valid_transfer_window)
+
+        if st.button(f"➡️ Roll Forward to {next_month_target}", disabled=btn_disabled, type="secondary"):
+            with st.spinner("Transferring stock quantities across all 3 sites..."):
+                try:
+                    success, target_m = transfer_stock_to_next_month(st.session_state.df, selected_month)
+                    if success:
+                        st.success(f"Successfully transferred all stock balances from {selected_month} to {target_m}!")
+                        if 'df' in st.session_state:
+                            del st.session_state['df']
+                        st.rerun()
+                    else:
+                        st.warning("No matching columns found to update. Check your column headers in Google Sheets.")
+                except Exception as e:
+                    st.error(f"Transfer failed: {e}")
+
+    # =========================================================================
+    # LOW STOCK ALERTS & REORDER SUMMARY
+    # =========================================================================
     if low_stock_alerts:
         with st.expander("🚩 View Low Stock Flags & Reorder Requirements", expanded=True):
             for alert in low_stock_alerts: 
