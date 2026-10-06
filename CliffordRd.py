@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from google.oauth2 import service_account
 import gspread
 import io
@@ -371,91 +372,86 @@ elif app_mode == "📈 Stock Trends":
                         "Direct_Pallets": float(p_row["Pending_Pallets"]),
                         "Rolls_As_Pallets": float(p_row["Pending_Rolls"]) / rop
                     }
-            
-            
-            # 3. 📍 PLACE NEW CODE HERE (Replacing the old step 3 & 4)
-        target_lookup = {k: v['target'] for k, v in thresholds.items()}
 
-        stacked_chart_records = []
-        for _, row in st.session_state.df.iterrows():
-            mat_name = str(row["Material"]).strip()
-            rop = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
-            
-            target_qty = float(target_lookup.get(mat_name, 0.0))
-            
-            floor_pallets = warehouse_pallet_totals.get(mat_name, 0.0)
-            floor_loose_rolls_as_pallets = warehouse_roll_totals.get(mat_name, 0.0) / rop
-            
-            pipeline_data = pending_pallet_breakdown.get(mat_name, {"Direct_Pallets": 0.0, "Rolls_As_Pallets": 0.0})
-            incoming_pallets_total = pipeline_data["Direct_Pallets"] + pipeline_data["Rolls_As_Pallets"]
-            
-            total_projected = floor_pallets + floor_loose_rolls_as_pallets + incoming_pallets_total
-            deficit = max(0.0, target_qty - total_projected)
+            # 3. Restructure layout for a unified stacked data frame matrix in Pallets
+            target_lookup = {k: v['target'] for k, v in thresholds.items()}
 
-            for comp_name, qty in [
-                ("On-Hand Pallets", floor_pallets),
-                ("On-Hand Loose Rolls (As Pallets)", floor_loose_rolls_as_pallets),
-                ("Pending Orders (As Pallets)", incoming_pallets_total)
-            ]:
-                stacked_chart_records.append({
-                    "Material": mat_name, 
-                    "Stock Composition": comp_name, 
-                    "Total Pallets": qty,
-                    "Target Amount": target_qty,
-                    "Deficit Below Target": deficit,
-                    "Total Projected": total_projected
-                })
+            stacked_chart_records = []
+            for _, row in st.session_state.df.iterrows():
+                mat_name = str(row["Material"]).strip()
+                rop = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
+                
+                target_qty = float(target_lookup.get(mat_name, 0.0))
+                
+                floor_pallets = warehouse_pallet_totals.get(mat_name, 0.0)
+                floor_loose_rolls_as_pallets = warehouse_roll_totals.get(mat_name, 0.0) / rop
+                
+                pipeline_data = pending_pallet_breakdown.get(mat_name, {"Direct_Pallets": 0.0, "Rolls_As_Pallets": 0.0})
+                incoming_pallets_total = pipeline_data["Direct_Pallets"] + pipeline_data["Rolls_As_Pallets"]
+                
+                total_projected = floor_pallets + floor_loose_rolls_as_pallets + incoming_pallets_total
+                deficit = max(0.0, target_qty - total_projected)
 
-        df_stack = pd.DataFrame(stacked_chart_records)
+                for comp_name, qty in [
+                    ("On-Hand Pallets", floor_pallets),
+                    ("On-Hand Loose Rolls (As Pallets)", floor_loose_rolls_as_pallets),
+                    ("Pending Orders (As Pallets)", incoming_pallets_total)
+                ]:
+                    stacked_chart_records.append({
+                        "Material": mat_name, 
+                        "Stock Composition": comp_name, 
+                        "Total Pallets": qty,
+                        "Target Amount": target_qty,
+                        "Deficit Below Target": deficit,
+                        "Total Projected": total_projected
+                    })
 
-        # 4. Generate Plotly figure with custom hover template
-        fig_stacked = px.bar(
-            df_stack, x="Material", y="Total Pallets", color="Stock Composition", barmode="stack",
-            title=f"Total Projected Multi-Site Volume vs. Pending Pipeline Additions ({selected_month})",
-            custom_data=["Target Amount", "Deficit Below Target", "Total Projected"],
-            color_discrete_map={
-                "On-Hand Loose Rolls (As Pallets)": "#ff7f0e",
-                "On-Hand Pallets": "#1f77b4",
-                "Pending Orders (As Pallets)": "#2ca02c"
-            }
-        )
-        
-        fig_stacked.update_traces(
-            hovertemplate=(
-                "<b>%{x}</b><br>" +
-                "Composition: %{fullData.name}<br>" +
-                "Category Quantity: %{y:.1f}<br>" +
-                "------------------------------<br>" +
-                "🎯 <b>Target Amount:</b> %{customdata[0]:.1f}<br>" +
-                "📊 <b>Total Projected:</b> %{customdata[2]:.1f}<br>" +
-                "🚨 <b>Deficit Below Target:</b> %{customdata[1]:.1f}<br>" +
-                "<extra></extra>"
+            df_stack = pd.DataFrame(stacked_chart_records)
+
+            # 4. Generate Plotly figure with custom hover template
+            fig_stacked = px.bar(
+                df_stack, x="Material", y="Total Pallets", color="Stock Composition", barmode="stack",
+                title=f"Total Projected Multi-Site Volume vs. Pending Pipeline Additions ({selected_month})",
+                custom_data=["Target Amount", "Deficit Below Target", "Total Projected"],
+                color_discrete_map={
+                    "On-Hand Loose Rolls (As Pallets)": "#ff7f0e",
+                    "On-Hand Pallets": "#1f77b4",
+                    "Pending Orders (As Pallets)": "#2ca02c"
+                }
             )
-        )
-        # 📍 PLACE NEW CODE HERE (Between update_traces and update_layout)
-        # Group by Material to get distinct target points for plotting
-        df_targets = df_stack.groupby("Material", as_index=False)["Target Amount"].first()
-        import plotly.graph_objects as go
-
-        # Add Target markers on top of the stacked bar chart
-        fig_stacked.add_trace(
-            go.Scatter(
-                x=df_targets["Material"],
-                y=df_targets["Target Amount"],
-                mode="markers",
-                name="Target Level",
-                marker=dict(color="red", size=10, symbol="line-ew-open", line=dict(width=3)),
-                hovertemplate="Target Level: %{y:.1f}<extra></extra>"
+            
+            fig_stacked.update_traces(
+                hovertemplate=(
+                    "<b>%{x}</b><br>" +
+                    "Composition: %{fullData.name}<br>" +
+                    "Category Quantity: %{y:.1f}<br>" +
+                    "------------------------------<br>" +
+                    "🎯 <b>Target Amount:</b> %{customdata[0]:.1f}<br>" +
+                    "📊 <b>Total Projected:</b> %{customdata[2]:.1f}<br>" +
+                    "🚨 <b>Deficit Below Target:</b> %{customdata[1]:.1f}<br>" +
+                    "<extra></extra>"
+                )
             )
-        )
 
+            # Add Target markers on top of the stacked bar chart
+            df_targets = df_stack.groupby("Material", as_index=False)["Target Amount"].first()
 
-        fig_stacked.update_layout(yaxis_title="Total Quantity (Equivalent Pallets)", xaxis_title="Material Type")
-        st.plotly_chart(fig_stacked, use_container_width=True)
+            fig_stacked.add_trace(
+                go.Scatter(
+                    x=df_targets["Material"],
+                    y=df_targets["Target Amount"],
+                    mode="markers",
+                    name="Target Level",
+                    marker=dict(color="red", size=10, symbol="line-ew-open", line=dict(width=3)),
+                    hovertemplate="Target Level: %{y:.1f}<extra></extra>"
+                )
+            )
 
-    except Exception as e:
-        st.error(f"Error compiling cumulative stacked data metrics: {e}")
+            fig_stacked.update_layout(yaxis_title="Total Quantity (Equivalent Pallets)", xaxis_title="Material Type")
+            st.plotly_chart(fig_stacked, use_container_width=True)
 
+        except Exception as e:
+            st.error(f"Error compiling cumulative stacked data metrics: {e}")
 
 # --- MODE 3: RECEIVE GOODS ---
 elif app_mode == "🚛 Receive Goods (KPark)":
