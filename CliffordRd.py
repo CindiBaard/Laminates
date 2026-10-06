@@ -63,12 +63,12 @@ months = ["January", "February", "March", "April", "May", "June", "July", "Augus
 selected_month = st.sidebar.selectbox("Select Month", months)
 
 thresholds = {
-    "129 PBL": {"val": 7, "target": 10, "unit": "Pallets"},
+    "129 PBL": {"val": 10, "target": 12, "unit": "Pallets"},
     "129 ABL White": {"val": 5, "target": 7, "unit": "Pallets"},
-    "113 ABL White": {"val": 9, "target": 11, "unit": "Pallets"},
-    "113 PBL": {"val": 8, "target": 15, "unit": "Pallets"},
+    "113 ABL White": {"val": 10, "target": 12, "unit": "Pallets"},
+    "113 PBL": {"val": 13, "target": 15, "unit": "Pallets"},
     "082 PBL": {"val": 4, "target": 6, "unit": "Pallets"},
-    "082 ABL White": {"val": 2, "target": 6, "unit": "Pallets"},
+    "082 ABL White": {"val": 3, "target": 6, "unit": "Pallets"},
     "082 ABL Silver": {"val": 20, "target": 36, "unit": "Rolls"},
     "129 ABL Silver": {"val": 20, "target": 20, "unit": "Rolls"},
     "113 ABL Silver": {"val": 20, "target": 32, "unit": "Rolls"},
