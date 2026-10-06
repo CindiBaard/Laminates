@@ -247,6 +247,7 @@ if app_mode == "📦 Stock Management":
 elif app_mode == "📈 Stock Trends":
     st.title("📈 Stock Level Analytics")
     
+    # 1. COMBINED WAREHOUSE STOCK BREAKDOWN
     st.subheader(f"📊 Combined Warehouse Stock Breakdown ({selected_month})")
     if st.button(f"🔄 Generate Combined Chart for {selected_month}"):
         combined_data = []
@@ -278,7 +279,58 @@ elif app_mode == "📈 Stock Trends":
         )
         st.plotly_chart(fig_combined, use_container_width=True)
 
-    # --- STANDALONE PENDING ORDERS BAR CHART ---
+    # 2. HISTORICAL MONTHLY MATERIAL USAGE & TRENDS
+    st.divider()
+    st.subheader("📅 Monthly Material Consumption & Historical Trends")
+    st.info("Tracks total stock levels across months to analyze monthly consumption patterns.")
+    
+    selected_months_trend = st.multiselect(
+        "Select Months to Compare Usage:", 
+        months, 
+        default=["January", "February", "March"]
+    )
+    
+    if st.button("📊 Compare Monthly Material Usage"):
+        monthly_trend_records = []
+        for m in selected_months_trend:
+            for _, row in st.session_state.df.iterrows():
+                mat_name = str(row["Material"]).strip()
+                rop = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
+                
+                m_pallets, m_rolls = 0.0, 0.0
+                for site in site_options:
+                    p_col = f"{site}_Pallets {m}"
+                    r_col = f"{site}_Rolls {m}"
+                    if p_col in st.session_state.df.columns:
+                        try: m_pallets += float(str(row[p_col]).replace(',', '').strip()) if str(row[p_col]).strip() != "" else 0
+                        except: pass
+                    if r_col in st.session_state.df.columns:
+                        try: m_rolls += float(str(row[r_col]).replace(',', '').strip()) if str(row[r_col]).strip() != "" else 0
+                        except: pass
+                
+                total_eq_pallets = m_pallets + (m_rolls / rop)
+                monthly_trend_records.append({
+                    "Material": mat_name,
+                    "Month": m,
+                    "Pallets": m_pallets,
+                    "Loose Rolls": m_rolls,
+                    "Total Equivalent Pallets": total_eq_pallets
+                })
+        
+        if monthly_trend_records:
+            df_trends = pd.DataFrame(monthly_trend_records)
+            fig_trends = px.bar(
+                df_trends, 
+                x="Material", 
+                y="Total Equivalent Pallets", 
+                color="Month", 
+                barmode="group",
+                title=f"Multi-Month Material Comparison ({', '.join(selected_months_trend)})"
+            )
+            fig_trends.update_layout(yaxis_title="Total Quantity (Equivalent Pallets)", xaxis_title="Material Type")
+            st.plotly_chart(fig_trends, use_container_width=True)
+
+    # 3. STANDALONE PENDING ORDERS BAR CHART
     st.divider()
     st.subheader(f"⏳ Standalone Pending Orders Chart ({selected_month})")
 
@@ -319,14 +371,14 @@ elif app_mode == "📈 Stock Trends":
         except Exception as e:
             st.error(f"Could not read 'Pending_Orders' tab: {e}")
 
-    # --- NEW CHART: COMBINED INVENTORY + PENDING STACKED PALLETS CHART ---
+    # 4. COMBINED INVENTORY + PENDING STACKED PALLETS CHART WITH TARGET MARKERS
     st.divider()
     st.subheader(f"📈 Total Projected Availability (Stock + Pending Arrivals in Pallets)")
 
     if st.button(f"📊 Generate Cumulative Stock & Pending Chart"):
         client = get_gspread_client()
         try:
-            # 1. Gather current warehouse metrics
+            # Gather current warehouse metrics
             warehouse_roll_totals = {}
             warehouse_pallet_totals = {}
             
@@ -345,7 +397,7 @@ elif app_mode == "📈 Stock Trends":
                 warehouse_roll_totals[mat_name] = t_rolls
                 warehouse_pallet_totals[mat_name] = t_pallets
 
-            # 2. Gather matching metrics from pipeline orders tab
+            # Gather pipeline orders
             pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
             pending_data = pending_sheet.get_all_records()
             
@@ -356,34 +408,29 @@ elif app_mode == "📈 Stock Trends":
                 df_pend["Pending_Pallets"] = safe_extract_numeric(df_pend["Pending_Pallets"])
                 df_pend["Pending_Rolls"] = safe_extract_numeric(df_pend["Pending_Rolls"])
                 
-                # Group data to accommodate multiple duplicate raw entry line items safely
                 grouped_pend = df_pend.groupby('Material', as_index=False)[["Pending_Pallets", "Pending_Rolls"]].sum()
                 for _, p_row in grouped_pend.iterrows():
                     m_name = str(p_row["Material"]).strip()
                     
-                    # Convert incoming loose rolls to fractional pallets using metadata reference
                     matched_row = st.session_state.df[st.session_state.df["Material"].str.strip() == m_name]
                     rop = 1.0
                     if not matched_row.empty:
                         rop = pd.to_numeric(matched_row.iloc[0]["Rolls_on_Pallet"], errors='coerce') or 1.0
                     
-                    # Store both direct pallets and fractional loose rolls converted to pallets
                     pending_pallet_breakdown[m_name] = {
                         "Direct_Pallets": float(p_row["Pending_Pallets"]),
                         "Rolls_As_Pallets": float(p_row["Pending_Rolls"]) / rop
                     }
 
-            # 3. Restructure layout for a unified stacked data frame matrix in Pallets
+            # Build stacked records with Rolls-to-Pallet converted target levels
             stacked_chart_records = []
             for _, row in st.session_state.df.iterrows():
                 mat_name = str(row["Material"]).strip()
                 rop = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
                 
-                # Fetch threshold rule for this material
                 t = thresholds.get(mat_name, {"target": 0.0, "unit": "Pallets"})
                 raw_target = float(t.get("target", 0.0))
                 
-                # If target is defined in Rolls, divide by Rolls_on_Pallet to convert to Pallets
                 if t.get("unit") == "Rolls":
                     target_qty = raw_target / rop
                 else:
@@ -414,7 +461,6 @@ elif app_mode == "📈 Stock Trends":
 
             df_stack = pd.DataFrame(stacked_chart_records)
 
-            # 4. Generate Plotly figure with custom hover template
             fig_stacked = px.bar(
                 df_stack, x="Material", y="Total Pallets", color="Stock Composition", barmode="stack",
                 title=f"Total Projected Multi-Site Volume vs. Pending Pipeline Additions ({selected_month})",
@@ -439,7 +485,6 @@ elif app_mode == "📈 Stock Trends":
                 )
             )
 
-            # Add Target markers on top of the stacked bar chart
             df_targets = df_stack.groupby("Material", as_index=False)["Target Amount"].first()
 
             fig_stacked.add_trace(
@@ -449,7 +494,7 @@ elif app_mode == "📈 Stock Trends":
                     mode="markers",
                     name="Target Level",
                     marker=dict(color="red", size=10, symbol="line-ew-open", line=dict(width=3)),
-                    hovertemplate="Target Level: %{y:.1f}<extra></extra>"
+                    hovertemplate="Target Level: %{y:.1f} Pallets<extra></extra>"
                 )
             )
 
@@ -526,7 +571,6 @@ elif app_mode == "🚛 Receive Goods (KPark)":
                         main_sheet.update_cell(cell.row, idx_r, cur_r + incoming_rolls)
                         main_sheet.update_cell(cell.row, idx_m, cur_m + incoming_m2)
                     
-                    # Cleanup Pending list
                     remaining = receive_editor[receive_editor["Received?"] == False].drop(columns=["Received?"])
                     pending_sheet.clear()
                     pending_sheet.append_row(["Material", "Code", "Pending_Pallets", "Pending_Rolls", "Pending_m2", "Final_Actual_Order", "Notes"])
@@ -559,7 +603,6 @@ elif app_mode == "📋 View Pending Orders":
             m2_col = "Pending_m2"
             act_col = "Final_Actual_Order"
             
-            # Harmonize column names between Notes and OrderNotes
             if "OrderNotes" in df_pending.columns:
                 df_pending.rename(columns={"OrderNotes": "Notes"}, inplace=True)
             elif "Notes" not in df_pending.columns:
@@ -573,7 +616,6 @@ elif app_mode == "📋 View Pending Orders":
                 st.info("Please check that the column headers on your 'Pending_Orders' tab match perfectly.")
                 st.stop()
 
-            # Clean and parse metrics by extracting first occurring digit patterns safely
             df_pending[p_col] = safe_extract_numeric(df_pending[p_col])
             df_pending[r_col] = safe_extract_numeric(df_pending[r_col])
             df_pending[m2_col] = safe_extract_numeric(df_pending[m2_col])
@@ -582,7 +624,6 @@ elif app_mode == "📋 View Pending Orders":
             display_order = ["Material", "Code", p_col, r_col, m2_col, act_col, notes_col]
             df_pending = df_pending[display_order]
 
-            # --- KPI METRICS ---
             m1, m2, m3 = st.columns(3)
             m1.metric("Pending Line Items", len(df_pending))
             m2.metric("Total Pending Pallets", f"{df_pending[p_col].sum():,.1f}")
@@ -590,7 +631,6 @@ elif app_mode == "📋 View Pending Orders":
 
             st.divider()
 
-            # --- EDITABLE TABLE FOR DELETION ---
             df_pending["Select to Delete"] = False
             editor_cols = ["Select to Delete"] + display_order
 
@@ -611,7 +651,6 @@ elif app_mode == "📋 View Pending Orders":
                 key="pending_manager_editor"
             )
 
-            # --- ACTIONS: DELETE & EXPORT ---
             col_del, col_exp = st.columns([1, 4])
             
             with col_del:
