@@ -374,14 +374,20 @@ elif app_mode == "📈 Stock Trends":
                     }
 
             # 3. Restructure layout for a unified stacked data frame matrix in Pallets
-            target_lookup = {k: v['target'] for k, v in thresholds.items()}
-
             stacked_chart_records = []
             for _, row in st.session_state.df.iterrows():
                 mat_name = str(row["Material"]).strip()
                 rop = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
                 
-                target_qty = float(target_lookup.get(mat_name, 0.0))
+                # Fetch threshold rule for this material
+                t = thresholds.get(mat_name, {"target": 0.0, "unit": "Pallets"})
+                raw_target = float(t.get("target", 0.0))
+                
+                # If target is defined in Rolls, divide by Rolls_on_Pallet to convert to Pallets
+                if t.get("unit") == "Rolls":
+                    target_qty = raw_target / rop
+                else:
+                    target_qty = raw_target
                 
                 floor_pallets = warehouse_pallet_totals.get(mat_name, 0.0)
                 floor_loose_rolls_as_pallets = warehouse_roll_totals.get(mat_name, 0.0) / rop
