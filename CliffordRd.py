@@ -279,9 +279,10 @@ elif app_mode == "📈 Stock Trends":
         )
         st.plotly_chart(fig_combined, use_container_width=True)
 
-    # --2. HISTORICAL MONTHLY MATERIAL USAGE & CONSUMPTION
+    # 2. HISTORICAL MONTHLY MATERIAL USAGE & CONSUMPTION
     st.divider()
     st.subheader("📅 Monthly Material Consumption & Historical Trends")
+    st.info("Tracks material consumption (stock drops) and flags months where new stock was delivered.")
 
     selected_months_trend = st.multiselect(
         "Select Months to Compare Usage (Select at least 2 consecutive months):", 
@@ -291,9 +292,8 @@ elif app_mode == "📈 Stock Trends":
 
     if st.button("📊 Calculate Monthly Material Consumption"):
         if len(selected_months_trend) < 2:
-            st.warning("Please select at least two months to calculate consumption/usage deltas.")
+            st.warning("Please select at least two consecutive months to calculate consumption.")
         else:
-            # Sort selected months in chronological order
             ordered_months = [m for m in months if m in selected_months_trend]
             consumption_records = []
 
@@ -306,7 +306,7 @@ elif app_mode == "📈 Stock Trends":
                     rop = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce')
                     rop = rop if pd.notnull(rop) and rop > 0 else 1.0
 
-                    # Calculate Equivalent Pallets for Previous Month
+                    # Calculate Previous Month Total (Equivalent Pallets)
                     prev_p, prev_r = 0.0, 0.0
                     for site in site_options:
                         p_col = f"{site}_Pallets {prev_m}"
@@ -319,7 +319,7 @@ elif app_mode == "📈 Stock Trends":
                             except: pass
                     prev_total_eq = prev_p + (prev_r / rop)
 
-                    # Calculate Equivalent Pallets for Current Month
+                    # Calculate Current Month Total (Equivalent Pallets)
                     curr_p, curr_r = 0.0, 0.0
                     for site in site_options:
                         p_col = f"{site}_Pallets {curr_m}"
@@ -332,33 +332,56 @@ elif app_mode == "📈 Stock Trends":
                             except: pass
                     curr_total_eq = curr_p + (curr_r / rop)
 
-                    # Estimated Usage (Stock Drop)
-                    used_eq_pallets = prev_total_eq - curr_total_eq
+                    # Calculate Net Change
+                    delta = prev_total_eq - curr_total_eq
+
+                    if delta > 0:
+                        net_consumed = delta
+                        stock_added = 0.0
+                        status = "Consumed"
+                    elif delta < 0:
+                        net_consumed = 0.0
+                        stock_added = abs(delta)
+                        status = "Stock Added / Delivery"
+                    else:
+                        net_consumed = 0.0
+                        stock_added = 0.0
+                        status = "No Change"
 
                     consumption_records.append({
                         "Material": mat_name,
                         "Period": f"{prev_m} -> {curr_m}",
                         "Start Stock (Eq Pallets)": round(prev_total_eq, 2),
                         "End Stock (Eq Pallets)": round(curr_total_eq, 2),
-                        "Net Consumption (Eq Pallets)": round(used_eq_pallets, 2)
+                        "Net Consumption (Eq Pallets)": round(net_consumed, 2),
+                        "Stock Added (Eq Pallets)": round(stock_added, 2),
+                        "Movement Status": status
                     })
 
             if consumption_records:
                 df_usage = pd.DataFrame(consumption_records)
+
+                # Filter chart to show actual consumption
                 fig_usage = px.bar(
-                    df_usage, 
+                    df_usage[df_usage["Net Consumption (Eq Pallets)"] > 0], 
                     x="Material", 
                     y="Net Consumption (Eq Pallets)", 
                     color="Period", 
                     barmode="group",
-                    title="Monthly Material Consumption (Stock Reduction Delta)"
+                    title="Monthly Material Consumption (Net Pallets Consumed)"
                 )
                 fig_usage.update_layout(yaxis_title="Used Quantity (Equivalent Pallets)", xaxis_title="Material Type")
                 st.plotly_chart(fig_usage, use_container_width=True)
-                
-                st.dataframe(df_usage, use_container_width=True)
-            
-            st.dataframe(df_usage, use_container_width=True)
+
+                # Detailed Table with Delivery Callouts
+                st.subheader("📋 Movement Ledger Details")
+                st.dataframe(
+                    df_usage.style.map(
+                        lambda val: 'background-color: #d4edda' if val == "Stock Added / Delivery" else '', 
+                        subset=['Movement Status']
+                    ), 
+                    use_container_width=True
+                )
 
     # 3. STANDALONE PENDING ORDERS BAR CHART
     st.divider()
