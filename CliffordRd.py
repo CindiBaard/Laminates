@@ -79,8 +79,9 @@ thresholds = {
 
 # --- MODE 1: STOCK MANAGEMENT ---
 if app_mode == "📦 Stock Management":
-    st.title(f"📦 {selected_site} - {selected_month} Management")
-    
+    st.title(f"📦 {selected_site} - {selected_month} Stock Management & Live Usage")
+    st.info("💡 Adjust roll and pallet counts below to record daily usage. Savings update live stock figures across all analytics.")
+
     roll_col = f"{selected_site}_Rolls {selected_month}"
     pallet_col = f"{selected_site}_Pallets {selected_month}"
     square_col = f"{selected_site}_SquareM {selected_month}"
@@ -95,10 +96,24 @@ if app_mode == "📦 Stock Management":
         "Rolls_on_Pallet": st.column_config.NumberColumn(disabled=True),
         "m_Square_per_pallet": st.column_config.NumberColumn(disabled=True),
     }
+    
+    # Enable editing for Pallets and Rolls so daily floor usage can be entered
     for col in available_cols:
-        col_config[col] = st.column_config.NumberColumn(step=0.5, format="%.1f", disabled=("SquareM" in col))
+        if "SquareM" in col:
+            col_config[col] = st.column_config.NumberColumn("m² Total", format="%.2f", disabled=True)
+        elif "Rolls" in col:
+            col_config[col] = st.column_config.NumberColumn("Rolls On-Hand / Used", step=1.0, format="%d", disabled=False)
+        elif "Pallets" in col:
+            col_config[col] = st.column_config.NumberColumn("Pallets On-Hand", step=0.5, format="%.1f", disabled=False)
 
-    edited_df = st.data_editor(st.session_state.df[display_cols], use_container_width=True, hide_index=True, column_config=col_config)
+    # Interactive Data Editor
+    edited_df = st.data_editor(
+        st.session_state.df[display_cols], 
+        use_container_width=True, 
+        hide_index=True, 
+        column_config=col_config,
+        key="live_stock_editor"
+    )
 
     # REORDER & ALERT LOGIC
     summary_list, low_stock_alerts, reorder_needed = [], [], []
@@ -109,14 +124,14 @@ if app_mode == "📦 Stock Management":
         mat_sum = {"Material": mat_name, "Code": row["Code"]}
         edited_row = edited_df.iloc[index]
         
-        # Calculate Gross across all sites
+        # Calculate Gross across all sites including real-time edits
         for metric in ["Rolls", "Pallets", "SquareM"]:
-            total = 0
+            total = 0.0
             for site in site_options:
                 c_name = f"{site}_{metric} {selected_month}"
                 val = edited_row[c_name] if site == selected_site and c_name in edited_row else row.get(c_name, 0)
                 try: 
-                    total += float(str(val).replace(',', '').strip()) if str(val).strip() != "" else 0
+                    total += float(str(val).replace(',', '').strip()) if str(val).strip() != "" else 0.0
                 except: 
                     pass
             mat_sum[f"Gross {metric}"] = total
@@ -145,12 +160,14 @@ if app_mode == "📦 Stock Management":
                 })
         summary_list.append(mat_sum)
 
+    # Save Real-Time Floor Counts
+    st.divider()
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Order Weight", f"{total_est_weight_kg:,.0f} KG")
     c2.metric("Container Capacity", f"{(total_est_weight_kg/CONTAINER_LIMIT_KG)*100:.1f}%")
     
     with c3:
-        if st.button("💾 Save Counts to Sheet"):
+        if st.button("💾 Save Live Daily Stock Counts"):
             client = get_gspread_client()
             sheet = client.open_by_key(SPREADSHEET_ID).sheet1
             updates = []
@@ -160,6 +177,7 @@ if app_mode == "📦 Stock Management":
                 r_p = pd.to_numeric(st.session_state.df.at[real_idx, "Rolls_on_Pallet"], errors='coerce') or 1
                 m_p = pd.to_numeric(st.session_state.df.at[real_idx, "m_Square_per_pallet"], errors='coerce') or 0
                 
+                # Recalculate total square meters from remaining pallets + loose rolls
                 m2 = round((row[pallet_col] * m_p) + (row[roll_col] * (m_p / r_p)), 2)
                 
                 for c, v in [(roll_col, row[roll_col]), (pallet_col, row[pallet_col]), (square_col, m2)]:
@@ -174,7 +192,7 @@ if app_mode == "📦 Stock Management":
                 sheet.batch_update(updates)
                 st.cache_data.clear()
                 st.session_state.df, _ = load_data()
-                st.success(f"Stock Updated for {selected_month}!")
+                st.success(f"✅ Live stock levels updated for {selected_month}!")
                 st.rerun()
 
     if low_stock_alerts:
