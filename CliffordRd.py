@@ -81,7 +81,12 @@ thresholds = {
 if app_mode == "📦 Stock Management":
     st.title(f"📦 {selected_site} - {selected_month} Stock Management & Daily Usage")
     
-    # --- PASSWORD AUTHENTICATION FOR EDITING ---
+    # 1. Define site and month column names FIRST
+    roll_col = f"{selected_site}_Rolls {selected_month}"
+    pallet_col = f"{selected_site}_Pallets {selected_month}"
+    square_col = f"{selected_site}_SquareM {selected_month}"
+
+    # 2. PASSWORD AUTHENTICATION FOR EDITING
     if "admin_authenticated" not in st.session_state:
         st.session_state.admin_authenticated = False
 
@@ -89,9 +94,7 @@ if app_mode == "📦 Stock Management":
         if not st.session_state.admin_authenticated:
             pwd_input = st.text_input("Enter Password to Enable Editing:", type="password", key="stock_edit_pwd")
             if st.button("Unlock Stock Editing"):
-                # Define your secret password here (e.g., "Bowler2026") or draw from st.secrets["APP_PASSWORD"]
-                MASTER_PASSWORD = st.secrets.get("APP_PASSWORD", "BowlerSecure2026")
-                
+                MASTER_PASSWORD = st.secrets.get("APP_PASSWORD", "Bowler2026")
                 if pwd_input == MASTER_PASSWORD:
                     st.session_state.admin_authenticated = True
                     st.success("🔓 Access Granted! Editing unlocked.")
@@ -111,7 +114,7 @@ if app_mode == "📦 Stock Management":
     else:
         st.warning("🔒 **Read-Only Mode:** Enter the authorization password in the sidebar to modify stock counts or record daily usage.")
 
-    # Prepare display dataframe with dedicated 'Rolls_Used_Today' column
+    # 3. Prepare display dataframe with dedicated 'Rolls_Used_Today' column
     df_display = st.session_state.df.copy()
     if "Rolls_Used_Today" not in df_display.columns:
         df_display["Rolls_Used_Today"] = 0.0
@@ -136,7 +139,7 @@ if app_mode == "📦 Stock Management":
         elif "Pallets" in col:
             col_config[col] = st.column_config.NumberColumn("Pallets On-Hand", step=0.5, format="%.1f", disabled=not is_editable)
 
-    # Data Editor (Disabled unless authorized)
+    # Data Editor
     edited_df = st.data_editor(
         df_display[display_cols], 
         use_container_width=True, 
