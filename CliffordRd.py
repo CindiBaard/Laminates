@@ -80,11 +80,36 @@ thresholds = {
 # --- MODE 1: STOCK MANAGEMENT ---
 if app_mode == "📦 Stock Management":
     st.title(f"📦 {selected_site} - {selected_month} Stock Management & Daily Usage")
-    st.info("💡 Enter daily roll consumption in the **Rolls Used Today** column. Saving will automatically deduct stock, recalculate full pallets, update total m², and refresh live analytics.")
+    
+    # --- PASSWORD AUTHENTICATION FOR EDITING ---
+    if "admin_authenticated" not in st.session_state:
+        st.session_state.admin_authenticated = False
 
-    roll_col = f"{selected_site}_Rolls {selected_month}"
-    pallet_col = f"{selected_site}_Pallets {selected_month}"
-    square_col = f"{selected_site}_SquareM {selected_month}"
+    with st.sidebar.expander("🔒 Authorization / Admin Mode", expanded=not st.session_state.admin_authenticated):
+        if not st.session_state.admin_authenticated:
+            pwd_input = st.text_input("Enter Password to Enable Editing:", type="password", key="stock_edit_pwd")
+            if st.button("Unlock Stock Editing"):
+                # Define your secret password here (e.g., "Bowler2026") or draw from st.secrets["APP_PASSWORD"]
+                MASTER_PASSWORD = st.secrets.get("APP_PASSWORD", "Bowler2026")
+                
+                if pwd_input == MASTER_PASSWORD:
+                    st.session_state.admin_authenticated = True
+                    st.success("🔓 Access Granted! Editing unlocked.")
+                    st.rerun()
+                else:
+                    st.error("❌ Incorrect Password")
+        else:
+            st.success("🔓 Authorized for Editing")
+            if st.button("Lock Editing"):
+                st.session_state.admin_authenticated = False
+                st.rerun()
+
+    is_editable = st.session_state.admin_authenticated
+
+    if is_editable:
+        st.info("💡 **Admin Mode Active:** Enter daily roll consumption in **Rolls Used Today** or adjust stock levels directly. Click save to record updates.")
+    else:
+        st.warning("🔒 **Read-Only Mode:** Enter the authorization password in the sidebar to modify stock counts or record daily usage.")
 
     # Prepare display dataframe with dedicated 'Rolls_Used_Today' column
     df_display = st.session_state.df.copy()
@@ -100,18 +125,18 @@ if app_mode == "📦 Stock Management":
         "Meters_per_Roll": st.column_config.NumberColumn(disabled=True),
         "Rolls_on_Pallet": st.column_config.NumberColumn(disabled=True),
         "m_Square_per_pallet": st.column_config.NumberColumn(disabled=True),
-        "Rolls_Used_Today": st.column_config.NumberColumn("Rolls Used Today", min_value=0.0, step=1.0, format="%d", help="Enter rolls consumed today"),
+        "Rolls_Used_Today": st.column_config.NumberColumn("Rolls Used Today", min_value=0.0, step=1.0, format="%d", disabled=not is_editable, help="Enter rolls consumed today"),
     }
     
     for col in available_cols:
         if "SquareM" in col:
             col_config[col] = st.column_config.NumberColumn("m² Total", format="%.2f", disabled=True)
         elif "Rolls" in col:
-            col_config[col] = st.column_config.NumberColumn("Rolls On-Hand", step=1.0, format="%d", disabled=False)
+            col_config[col] = st.column_config.NumberColumn("Rolls On-Hand", step=1.0, format="%d", disabled=not is_editable)
         elif "Pallets" in col:
-            col_config[col] = st.column_config.NumberColumn("Pallets On-Hand", step=0.5, format="%.1f", disabled=False)
+            col_config[col] = st.column_config.NumberColumn("Pallets On-Hand", step=0.5, format="%.1f", disabled=not is_editable)
 
-    # Interactive Data Editor
+    # Data Editor (Disabled unless authorized)
     edited_df = st.data_editor(
         df_display[display_cols], 
         use_container_width=True, 
@@ -129,7 +154,6 @@ if app_mode == "📦 Stock Management":
         mat_sum = {"Material": mat_name, "Code": row["Code"]}
         edited_row = edited_df.iloc[index]
         
-        # Calculate Gross across all sites including real-time edits
         for metric in ["Rolls", "Pallets", "SquareM"]:
             total = 0.0
             for site in site_options:
@@ -141,7 +165,6 @@ if app_mode == "📦 Stock Management":
                     pass
             mat_sum[f"Gross {metric}"] = total
         
-        # Threshold Checks
         if mat_name in thresholds:
             t = thresholds[mat_name]
             cur = mat_sum[f"Gross {t['unit']}"]
@@ -165,58 +188,56 @@ if app_mode == "📦 Stock Management":
                 })
         summary_list.append(mat_sum)
 
-    # Save Live Daily Stock Counts & Deduct Rolls Used
+    # Save Button & Metrics
     st.divider()
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Order Weight", f"{total_est_weight_kg:,.0f} KG")
     c2.metric("Container Capacity", f"{(total_est_weight_kg/CONTAINER_LIMIT_KG)*100:.1f}%")
     
     with c3:
-        if st.button("💾 Save Live Daily Stock Counts"):
-            client = get_gspread_client()
-            sheet = client.open_by_key(SPREADSHEET_ID).sheet1
-            updates = []
-            
-            for idx, row in edited_df.iterrows():
-                real_idx = st.session_state.df.index[idx] 
-                r_p = pd.to_numeric(st.session_state.df.at[real_idx, "Rolls_on_Pallet"], errors='coerce') or 1.0
-                m_p = pd.to_numeric(st.session_state.df.at[real_idx, "m_Square_per_pallet"], errors='coerce') or 0.0
+        if is_editable:
+            if st.button("💾 Save Live Daily Stock Counts"):
+                client = get_gspread_client()
+                sheet = client.open_by_key(SPREADSHEET_ID).sheet1
+                updates = []
                 
-                # Fetch starting stock balances
-                curr_rolls = float(row[roll_col]) if str(row[roll_col]).strip() != "" else 0.0
-                curr_pallets = float(row[pallet_col]) if str(row[pallet_col]).strip() != "" else 0.0
-                used_today = float(row["Rolls_Used_Today"]) if str(row["Rolls_Used_Today"]).strip() != "" else 0.0
+                for idx, row in edited_df.iterrows():
+                    real_idx = st.session_state.df.index[idx] 
+                    r_p = pd.to_numeric(st.session_state.df.at[real_idx, "Rolls_on_Pallet"], errors='coerce') or 1.0
+                    m_p = pd.to_numeric(st.session_state.df.at[real_idx, "m_Square_per_pallet"], errors='coerce') or 0.0
+                    
+                    curr_rolls = float(row[roll_col]) if str(row[roll_col]).strip() != "" else 0.0
+                    curr_pallets = float(row[pallet_col]) if str(row[pallet_col]).strip() != "" else 0.0
+                    used_today = float(row["Rolls_Used_Today"]) if str(row["Rolls_Used_Today"]).strip() != "" else 0.0
 
-                # Deduct rolls used today
-                net_rolls = curr_rolls - used_today
+                    net_rolls = curr_rolls - used_today
 
-                # If rolls fall below 0, adjust pallets down accordingly
-                if net_rolls < 0:
-                    pallets_to_break = float(int(abs(net_rolls) // r_p) + 1)
-                    if curr_pallets >= pallets_to_break:
-                        curr_pallets -= pallets_to_break
-                        net_rolls += (pallets_to_break * r_p)
-                    else:
-                        net_rolls = 0.0
+                    if net_rolls < 0:
+                        pallets_to_break = float(int(abs(net_rolls) // r_p) + 1)
+                        if curr_pallets >= pallets_to_break:
+                            curr_pallets -= pallets_to_break
+                            net_rolls += (pallets_to_break * r_p)
+                        else:
+                            net_rolls = 0.0
 
-                # Recalculate total square meters from updated pallets + loose rolls
-                new_m2 = round((curr_pallets * m_p) + (net_rolls * (m_p / r_p)), 2)
+                    new_m2 = round((curr_pallets * m_p) + (net_rolls * (m_p / r_p)), 2)
 
-                # Prepare updates for Google Sheets
-                for c, v in [(roll_col, net_rolls), (pallet_col, curr_pallets), (square_col, new_m2)]:
-                    if c in st.session_state.df.columns:
-                        col_idx = st.session_state.df.columns.get_loc(c) + 1
-                        updates.append({
-                            'range': gspread.utils.rowcol_to_a1(real_idx + 2, col_idx), 
-                            'values': [[float(v)]] 
-                        })
-            
-            if updates:
-                sheet.batch_update(updates)
-                st.cache_data.clear()
-                st.session_state.df, _ = load_data()
-                st.success(f"✅ Daily usage deducted and live stock figures updated for {selected_month}!")
-                st.rerun()
+                    for c, v in [(roll_col, net_rolls), (pallet_col, curr_pallets), (square_col, new_m2)]:
+                        if c in st.session_state.df.columns:
+                            col_idx = st.session_state.df.columns.get_loc(c) + 1
+                            updates.append({
+                                'range': gspread.utils.rowcol_to_a1(real_idx + 2, col_idx), 
+                                'values': [[float(v)]] 
+                            })
+                
+                if updates:
+                    sheet.batch_update(updates)
+                    st.cache_data.clear()
+                    st.session_state.df, _ = load_data()
+                    st.success(f"✅ Daily usage deducted and live stock figures updated for {selected_month}!")
+                    st.rerun()
+        else:
+            st.button("💾 Save Live Daily Stock Counts", disabled=True, help="Unlock editing in sidebar to save changes")
 
     if low_stock_alerts:
         with st.expander("🚩 View Low Stock Flags", expanded=True):
@@ -240,8 +261,8 @@ if app_mode == "📦 Stock Management":
                 "Material": st.column_config.TextColumn(disabled=True),
                 "Code": st.column_config.TextColumn(disabled=True),
                 "Suggested Order": st.column_config.TextColumn("System Suggestion", disabled=True),
-                "Final_Actual_Order": st.column_config.NumberColumn("Actual Order (Count)", min_value=0.0, step=0.5),
-                "OrderNotes": st.column_config.TextColumn("Reason for Change"),
+                "Final_Actual_Order": st.column_config.NumberColumn("Actual Order (Count)", min_value=0.0, step=0.5, disabled=not is_editable),
+                "OrderNotes": st.column_config.TextColumn("Reason for Change", disabled=not is_editable),
                 "Sug_Qty": st.column_config.NumberColumn(disabled=True),
                 "Unit_Type": st.column_config.TextColumn(disabled=True),
                 "m2_Per_Pallet": st.column_config.NumberColumn(disabled=True),
@@ -250,39 +271,42 @@ if app_mode == "📦 Stock Management":
             hide_index=True, use_container_width=True, key=f"edit_{state_key}"
         )
 
-        if st.button("✅ Save Final Order to Pending List"):
-            client = get_gspread_client()
-            try:
-                pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
-                
-                rows_to_append = []
-                for _, p_row in proc_editor.iterrows():
-                    act_qty = float(p_row['Final_Actual_Order'])
-                    if act_qty > 0:
-                        p_count = act_qty if p_row['Unit_Type'] == "Pallets" else 0.0
-                        r_count = act_qty if p_row['Unit_Type'] == "Rolls" else 0.0
-                        
-                        m2p = float(p_row['m2_Per_Pallet'])
-                        rop = float(p_row['Rolls_on_Pallet']) if float(p_row['Rolls_on_Pallet']) > 0 else 1
-                        calculated_m2 = round(p_count * m2p + r_count * (m2p / rop), 2)
-                        
-                        rows_to_append.append([
-                            p_row['Material'],
-                            p_row['Code'],
-                            p_count,
-                            r_count,
-                            calculated_m2,
-                            act_qty,  
-                            p_row['OrderNotes']
-                        ])
-                
-                if rows_to_append:
-                    pending_sheet.append_rows(rows_to_append)
-                    st.success("Order added to Pending List successfully!")
-                else:
-                    st.warning("Please enter at least one quantity.")
-            except Exception as e:
-                st.error(f"Error saving order: {e}")
+        if is_editable:
+            if st.button("✅ Save Final Order to Pending List"):
+                client = get_gspread_client()
+                try:
+                    pending_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Pending_Orders")
+                    
+                    rows_to_append = []
+                    for _, p_row in proc_editor.iterrows():
+                        act_qty = float(p_row['Final_Actual_Order'])
+                        if act_qty > 0:
+                            p_count = act_qty if p_row['Unit_Type'] == "Pallets" else 0.0
+                            r_count = act_qty if p_row['Unit_Type'] == "Rolls" else 0.0
+                            
+                            m2p = float(p_row['m2_Per_Pallet'])
+                            rop = float(p_row['Rolls_on_Pallet']) if float(p_row['Rolls_on_Pallet']) > 0 else 1
+                            calculated_m2 = round(p_count * m2p + r_count * (m2p / rop), 2)
+                            
+                            rows_to_append.append([
+                                p_row['Material'],
+                                p_row['Code'],
+                                p_count,
+                                r_count,
+                                calculated_m2,
+                                act_qty,  
+                                p_row['OrderNotes']
+                            ])
+                    
+                    if rows_to_append:
+                        pending_sheet.append_rows(rows_to_append)
+                        st.success("Order added to Pending List successfully!")
+                    else:
+                        st.warning("Please enter at least one quantity.")
+                except Exception as e:
+                    st.error(f"Error saving order: {e}")
+        else:
+            st.button("✅ Save Final Order to Pending List", disabled=True)
                 
 # --- MODE 2: TRENDS & MONTHLY BREAKDOWN ---
 elif app_mode == "📈 Stock Trends":
