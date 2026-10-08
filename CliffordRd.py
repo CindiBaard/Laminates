@@ -284,7 +284,11 @@ elif app_mode == "📈 Stock Trends":
     # --- CURRENT MONTH REAL-TIME USAGE TO-DATE ---
     st.divider()
     st.subheader(f"⚡ Live Usage To-Date ({selected_month})")
-    st.info(f"Compares opening stock recorded for **{selected_month}** against live floor counts entered in the Stock Management tab.")
+    st.info(f"Compares opening stock from the previous month against current recorded counts in **{selected_month}**.")
+
+    # Find the previous month index to set opening baseline
+    month_idx = months.index(selected_month)
+    prev_month = months[month_idx - 1] if month_idx > 0 else months[0]
 
     live_usage_records = []
     
@@ -293,11 +297,11 @@ elif app_mode == "📈 Stock Trends":
         rop = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce')
         rop = rop if pd.notnull(rop) and rop > 0 else 1.0
 
-        # Calculate opening month stock across all sites (from Google Sheet data)
+        # Opening Baseline = Previous Month's Total Stock
         opening_pallets, opening_rolls = 0.0, 0.0
         for site in site_options:
-            p_col = f"{site}_Pallets {selected_month}"
-            r_col = f"{site}_Rolls {selected_month}"
+            p_col = f"{site}_Pallets {prev_month}"
+            r_col = f"{site}_Rolls {prev_month}"
             if p_col in st.session_state.df.columns:
                 try: opening_pallets += float(str(row[p_col]).replace(',', '').strip()) if str(row[p_col]).strip() != "" else 0
                 except: pass
@@ -307,39 +311,54 @@ elif app_mode == "📈 Stock Trends":
         
         opening_total_eq = opening_pallets + (opening_rolls / rop)
 
-        # Get live current counts from session state edited df if modified, else floor data
-        current_pallets, current_rolls = opening_pallets, opening_rolls
+        # Current Stock = Selected Month's Counts
+        current_pallets, current_rolls = 0.0, 0.0
+        for site in site_options:
+            p_col = f"{site}_Pallets {selected_month}"
+            r_col = f"{site}_Rolls {selected_month}"
+            if p_col in st.session_state.df.columns:
+                try: current_pallets += float(str(row[p_col]).replace(',', '').strip()) if str(row[p_col]).strip() != "" else 0
+                except: pass
+            if r_col in st.session_state.df.columns:
+                try: current_rolls += float(str(row[r_col]).replace(',', '').strip()) if str(row[r_col]).strip() != "" else 0
+                except: pass
         
-        # Calculate net stock drop so far
-        used_todate = max(0.0, opening_total_eq - (current_pallets + (current_rolls / rop)))
+        current_total_eq = current_pallets + (current_rolls / rop)
+
+        # Usage To-Date (Stock Drop from Previous Month End)
+        used_todate = max(0.0, opening_total_eq - current_total_eq)
 
         live_usage_records.append({
             "Material": mat_name,
-            f"{selected_month} Opening Stock (Eq Pallets)": round(opening_total_eq, 2),
+            f"Opening Stock ({prev_month})": round(opening_total_eq, 2),
+            f"Current Stock ({selected_month})": round(current_total_eq, 2),
             "Estimated Used To-Date (Eq Pallets)": round(used_todate, 2)
         })
 
     if live_usage_records:
         df_live = pd.DataFrame(live_usage_records)
         
-        # Display key metric summary cards
+        # Summary Metrics
         m1, m2 = st.columns(2)
-        total_start = df_live[f"{selected_month} Opening Stock (Eq Pallets)"].sum()
+        total_start = df_live[f"Opening Stock ({prev_month})"].sum()
         total_used = df_live["Estimated Used To-Date (Eq Pallets)"].sum()
         
-        m1.metric(f"Total {selected_month} Opening Stock", f"{total_start:,.1f} Pallets")
-        m2.metric(f"Total {selected_month} Consumption To-Date", f"{total_used:,.1f} Pallets")
+        m1.metric(f"Opening Baseline Stock ({prev_month})", f"{total_start:,.1f} Pallets")
+        m2.metric(f"{selected_month} Consumption To-Date", f"{total_used:,.1f} Pallets")
 
-        # Visual breakdown chart
+        # Visual Breakdown Chart
         fig_live = px.bar(
-            df_live,
+            df_live[df_live["Estimated Used To-Date (Eq Pallets)"] > 0],
             x="Material",
             y="Estimated Used To-Date (Eq Pallets)",
-            title=f"Material Consumption To-Date for {selected_month}",
+            title=f"Material Consumption To-Date for {selected_month} (vs. {prev_month} Baseline)",
             color_discrete_sequence=["#2ca02c"]
         )
         fig_live.update_layout(yaxis_title="Used Quantity (Equivalent Pallets)", xaxis_title="Material Type")
         st.plotly_chart(fig_live, use_container_width=True)
+
+        # Detail Table
+        st.dataframe(df_live, use_container_width=True)
         
     st.divider()
     st.subheader("📅 Monthly Material Consumption & Historical Trends")
