@@ -79,15 +79,20 @@ thresholds = {
 
 # --- MODE 1: STOCK MANAGEMENT ---
 if app_mode == "📦 Stock Management":
-    st.title(f"📦 {selected_site} - {selected_month} Stock Management & Live Usage")
-    st.info("💡 Adjust roll and pallet counts below to record daily usage. Savings update live stock figures across all analytics.")
+    st.title(f"📦 {selected_site} - {selected_month} Stock Management & Daily Usage")
+    st.info("💡 Enter daily roll consumption in the **Rolls Used Today** column. Saving will automatically deduct stock, recalculate full pallets, update total m², and refresh live analytics.")
 
     roll_col = f"{selected_site}_Rolls {selected_month}"
     pallet_col = f"{selected_site}_Pallets {selected_month}"
     square_col = f"{selected_site}_SquareM {selected_month}"
 
-    available_cols = [c for c in [roll_col, pallet_col, square_col] if c in st.session_state.df.columns]
-    display_cols = ["Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet"] + available_cols
+    # Prepare display dataframe with dedicated 'Rolls_Used_Today' column
+    df_display = st.session_state.df.copy()
+    if "Rolls_Used_Today" not in df_display.columns:
+        df_display["Rolls_Used_Today"] = 0.0
+
+    available_cols = [c for c in [roll_col, pallet_col, square_col] if c in df_display.columns]
+    display_cols = ["Material", "Code", "Meters_per_Roll", "Rolls_on_Pallet", "m_Square_per_pallet", "Rolls_Used_Today"] + available_cols
 
     col_config = {
         "Material": st.column_config.TextColumn(pinned=True),
@@ -95,24 +100,24 @@ if app_mode == "📦 Stock Management":
         "Meters_per_Roll": st.column_config.NumberColumn(disabled=True),
         "Rolls_on_Pallet": st.column_config.NumberColumn(disabled=True),
         "m_Square_per_pallet": st.column_config.NumberColumn(disabled=True),
+        "Rolls_Used_Today": st.column_config.NumberColumn("Rolls Used Today", min_value=0.0, step=1.0, format="%d", help="Enter rolls consumed today"),
     }
     
-    # Enable editing for Pallets and Rolls so daily floor usage can be entered
     for col in available_cols:
         if "SquareM" in col:
             col_config[col] = st.column_config.NumberColumn("m² Total", format="%.2f", disabled=True)
         elif "Rolls" in col:
-            col_config[col] = st.column_config.NumberColumn("Rolls On-Hand / Used", step=1.0, format="%d", disabled=False)
+            col_config[col] = st.column_config.NumberColumn("Rolls On-Hand", step=1.0, format="%d", disabled=False)
         elif "Pallets" in col:
             col_config[col] = st.column_config.NumberColumn("Pallets On-Hand", step=0.5, format="%.1f", disabled=False)
 
     # Interactive Data Editor
     edited_df = st.data_editor(
-        st.session_state.df[display_cols], 
+        df_display[display_cols], 
         use_container_width=True, 
         hide_index=True, 
         column_config=col_config,
-        key="live_stock_editor"
+        key="daily_usage_editor"
     )
 
     # REORDER & ALERT LOGIC
@@ -160,7 +165,7 @@ if app_mode == "📦 Stock Management":
                 })
         summary_list.append(mat_sum)
 
-    # Save Real-Time Floor Counts
+    # Save Live Daily Stock Counts & Deduct Rolls Used
     st.divider()
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Order Weight", f"{total_est_weight_kg:,.0f} KG")
@@ -174,13 +179,31 @@ if app_mode == "📦 Stock Management":
             
             for idx, row in edited_df.iterrows():
                 real_idx = st.session_state.df.index[idx] 
-                r_p = pd.to_numeric(st.session_state.df.at[real_idx, "Rolls_on_Pallet"], errors='coerce') or 1
-                m_p = pd.to_numeric(st.session_state.df.at[real_idx, "m_Square_per_pallet"], errors='coerce') or 0
+                r_p = pd.to_numeric(st.session_state.df.at[real_idx, "Rolls_on_Pallet"], errors='coerce') or 1.0
+                m_p = pd.to_numeric(st.session_state.df.at[real_idx, "m_Square_per_pallet"], errors='coerce') or 0.0
                 
-                # Recalculate total square meters from remaining pallets + loose rolls
-                m2 = round((row[pallet_col] * m_p) + (row[roll_col] * (m_p / r_p)), 2)
-                
-                for c, v in [(roll_col, row[roll_col]), (pallet_col, row[pallet_col]), (square_col, m2)]:
+                # Fetch starting stock balances
+                curr_rolls = float(row[roll_col]) if str(row[roll_col]).strip() != "" else 0.0
+                curr_pallets = float(row[pallet_col]) if str(row[pallet_col]).strip() != "" else 0.0
+                used_today = float(row["Rolls_Used_Today"]) if str(row["Rolls_Used_Today"]).strip() != "" else 0.0
+
+                # Deduct rolls used today
+                net_rolls = curr_rolls - used_today
+
+                # If rolls fall below 0, adjust pallets down accordingly
+                if net_rolls < 0:
+                    pallets_to_break = float(int(abs(net_rolls) // r_p) + 1)
+                    if curr_pallets >= pallets_to_break:
+                        curr_pallets -= pallets_to_break
+                        net_rolls += (pallets_to_break * r_p)
+                    else:
+                        net_rolls = 0.0
+
+                # Recalculate total square meters from updated pallets + loose rolls
+                new_m2 = round((curr_pallets * m_p) + (net_rolls * (m_p / r_p)), 2)
+
+                # Prepare updates for Google Sheets
+                for c, v in [(roll_col, net_rolls), (pallet_col, curr_pallets), (square_col, new_m2)]:
                     if c in st.session_state.df.columns:
                         col_idx = st.session_state.df.columns.get_loc(c) + 1
                         updates.append({
@@ -192,7 +215,7 @@ if app_mode == "📦 Stock Management":
                 sheet.batch_update(updates)
                 st.cache_data.clear()
                 st.session_state.df, _ = load_data()
-                st.success(f"✅ Live stock levels updated for {selected_month}!")
+                st.success(f"✅ Daily usage deducted and live stock figures updated for {selected_month}!")
                 st.rerun()
 
     if low_stock_alerts:
@@ -260,7 +283,7 @@ if app_mode == "📦 Stock Management":
                     st.warning("Please enter at least one quantity.")
             except Exception as e:
                 st.error(f"Error saving order: {e}")
-
+                
 # --- MODE 2: TRENDS & MONTHLY BREAKDOWN ---
 elif app_mode == "📈 Stock Trends":
     st.title("📈 Stock Level Analytics")
