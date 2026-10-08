@@ -279,56 +279,84 @@ elif app_mode == "📈 Stock Trends":
         )
         st.plotly_chart(fig_combined, use_container_width=True)
 
-    # 2. HISTORICAL MONTHLY MATERIAL USAGE & TRENDS
-    st.divider()
-    st.subheader("📅 Monthly Material Consumption & Historical Trends")
-    st.info("Tracks total stock levels across months to analyze monthly consumption patterns.")
-    
-    selected_months_trend = st.multiselect(
-        "Select Months to Compare Usage:", 
-        months, 
-        default=["January", "February", "March"]
-    )
-    
-    if st.button("📊 Compare Monthly Material Usage"):
-        monthly_trend_records = []
-        for m in selected_months_trend:
+    # --- 2. HISTORICAL MONTHLY MATERIAL USAGE & CONSUMPTION ---
+st.divider()
+st.subheader("📅 Monthly Material Consumption & Historical Trends")
+
+selected_months_trend = st.multiselect(
+    "Select Months to Compare Usage (Select at least 2 consecutive months):", 
+    months, 
+    default=["June", "July"]
+)
+
+if st.button("📊 Calculate Monthly Material Consumption"):
+    if len(selected_months_trend) < 2:
+        st.warning("Please select at least two months to calculate consumption/usage deltas.")
+    else:
+        # Sort selected months in chronological order
+        ordered_months = [m for m in months if m in selected_months_trend]
+        consumption_records = []
+
+        for i in range(1, len(ordered_months)):
+            prev_m = ordered_months[i - 1]
+            curr_m = ordered_months[i]
+
             for _, row in st.session_state.df.iterrows():
                 mat_name = str(row["Material"]).strip()
-                rop = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce') or 1.0
-                
-                m_pallets, m_rolls = 0.0, 0.0
+                rop = pd.to_numeric(row["Rolls_on_Pallet"], errors='coerce')
+                rop = rop if pd.notnull(rop) and rop > 0 else 1.0
+
+                # Calculate Equivalent Pallets for Previous Month
+                prev_p, prev_r = 0.0, 0.0
                 for site in site_options:
-                    p_col = f"{site}_Pallets {m}"
-                    r_col = f"{site}_Rolls {m}"
+                    p_col = f"{site}_Pallets {prev_m}"
+                    r_col = f"{site}_Rolls {prev_m}"
                     if p_col in st.session_state.df.columns:
-                        try: m_pallets += float(str(row[p_col]).replace(',', '').strip()) if str(row[p_col]).strip() != "" else 0
+                        try: prev_p += float(str(row[p_col]).replace(',', '').strip()) if str(row[p_col]).strip() != "" else 0
                         except: pass
                     if r_col in st.session_state.df.columns:
-                        try: m_rolls += float(str(row[r_col]).replace(',', '').strip()) if str(row[r_col]).strip() != "" else 0
+                        try: prev_r += float(str(row[r_col]).replace(',', '').strip()) if str(row[r_col]).strip() != "" else 0
                         except: pass
-                
-                total_eq_pallets = m_pallets + (m_rolls / rop)
-                monthly_trend_records.append({
+                prev_total_eq = prev_p + (prev_r / rop)
+
+                # Calculate Equivalent Pallets for Current Month
+                curr_p, curr_r = 0.0, 0.0
+                for site in site_options:
+                    p_col = f"{site}_Pallets {curr_m}"
+                    r_col = f"{site}_Rolls {curr_m}"
+                    if p_col in st.session_state.df.columns:
+                        try: curr_p += float(str(row[p_col]).replace(',', '').strip()) if str(row[p_col]).strip() != "" else 0
+                        except: pass
+                    if r_col in st.session_state.df.columns:
+                        try: curr_r += float(str(row[r_col]).replace(',', '').strip()) if str(row[r_col]).strip() != "" else 0
+                        except: pass
+                curr_total_eq = curr_p + (curr_r / rop)
+
+                # Estimated Usage (Stock Drop)
+                used_eq_pallets = prev_total_eq - curr_total_eq
+
+                consumption_records.append({
                     "Material": mat_name,
-                    "Month": m,
-                    "Pallets": m_pallets,
-                    "Loose Rolls": m_rolls,
-                    "Total Equivalent Pallets": total_eq_pallets
+                    "Period": f"{prev_m} -> {curr_m}",
+                    "Start Stock (Eq Pallets)": round(prev_total_eq, 2),
+                    "End Stock (Eq Pallets)": round(curr_total_eq, 2),
+                    "Net Consumption (Eq Pallets)": round(used_eq_pallets, 2)
                 })
-        
-        if monthly_trend_records:
-            df_trends = pd.DataFrame(monthly_trend_records)
-            fig_trends = px.bar(
-                df_trends, 
+
+        if consumption_records:
+            df_usage = pd.DataFrame(consumption_records)
+            fig_usage = px.bar(
+                df_usage, 
                 x="Material", 
-                y="Total Equivalent Pallets", 
-                color="Month", 
+                y="Net Consumption (Eq Pallets)", 
+                color="Period", 
                 barmode="group",
-                title=f"Multi-Month Material Comparison ({', '.join(selected_months_trend)})"
+                title="Monthly Material Consumption (Stock Reduction Delta)"
             )
-            fig_trends.update_layout(yaxis_title="Total Quantity (Equivalent Pallets)", xaxis_title="Material Type")
-            st.plotly_chart(fig_trends, use_container_width=True)
+            fig_usage.update_layout(yaxis_title="Used Quantity (Equivalent Pallets)", xaxis_title="Material Type")
+            st.plotly_chart(fig_usage, use_container_width=True)
+            
+            st.dataframe(df_usage, use_container_width=True)
 
     # 3. STANDALONE PENDING ORDERS BAR CHART
     st.divider()
