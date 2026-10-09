@@ -94,7 +94,7 @@ if app_mode == "📦 Stock Management":
         if not st.session_state.admin_authenticated:
             pwd_input = st.text_input("Enter Password to Enable Editing:", type="password", key="stock_edit_pwd")
             if st.button("Unlock Stock Editing"):
-                MASTER_PASSWORD = st.secrets.get("APP_PASSWORD", "Bowler2026")
+                MASTER_PASSWORD = st.secrets.get("APP_PASSWORD", "BowlerSecure2026")
                 if pwd_input == MASTER_PASSWORD:
                     st.session_state.admin_authenticated = True
                     st.success("🔓 Access Granted! Editing unlocked.")
