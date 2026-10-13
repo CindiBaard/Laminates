@@ -20,6 +20,19 @@ API_SCOPES = [
 WEIGHT_FACTORS = {"Pallet_Avg_KG": 850.0, "Roll_Avg_KG": 25.0}
 CONTAINER_LIMIT_KG = 18000.0
 
+# --- KEEP-ALIVE HEARTBEAT FRAGMENT ---
+# This runs in the background every 60 seconds to ping the server and 
+# prevent websocket/connection timeouts while the user is actively working.
+@st.fragment(run_every=60)
+def keep_alive_heartbeat():
+    if "last_ping" not in st.session_state:
+        st.session_state.last_ping = time.time()
+    # Silently update state to keep the connection alive
+    st.session_state.last_ping = time.time()
+
+# Invoke the background heartbeat
+keep_alive_heartbeat()
+
 # --- 2. AUTHENTICATION ---
 def get_gspread_client():
     creds_info = dict(st.secrets["gcp_service_account"])
